@@ -1,5 +1,7 @@
 # Session-owned background delegation
 
+> Policy update (2026-10-12): [ADR 0021](../adr/0021-query-only-background-result-retrieval.md) replaces automatic background completion messages, follow-up queueing, parent wake-up and delivery observations with on-demand result queries. Requirements/evidence below about the old delivery policy are historical; all other execution, discovery, retention and control boundaries remain unchanged.
+
 **Spec ID:** 0002
 **Status:** Implemented
 **Date:** 2026-10-03

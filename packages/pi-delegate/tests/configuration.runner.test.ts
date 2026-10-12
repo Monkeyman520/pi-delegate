@@ -3,10 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-	type BackgroundTaskResult,
-	BackgroundTasks,
-} from "../src/background.ts";
+import { BackgroundTasks } from "../src/background.ts";
 import {
 	type DelegationOptions,
 	type DelegationResult,
@@ -54,16 +51,9 @@ for (const background of [false, true])
 					: [];
 			const controller = new AbortController();
 			const observed: string[] = [];
-			const delivered: BackgroundTaskResult[] = [];
-			const owner = new BackgroundTasks(
-				runDelegation,
-				() => {
-					throw new Error("Runner must return structured failure");
-				},
-				(result) => {
-					delivered.push(result);
-				},
-			);
+			const owner = new BackgroundTasks(runDelegation, () => {
+				throw new Error("Runner must return structured failure");
+			});
 			const options: DelegationOptions = {
 				cwd: process.cwd(),
 				args: [],
@@ -92,10 +82,7 @@ for (const background of [false, true])
 				let taskId: string | undefined;
 				let operation: Promise<DelegationResult> | undefined;
 				if (background) {
-					const acknowledgement = owner.start(options, {
-						isIdle: () => true,
-						hasPendingMessages: () => false,
-					});
+					const acknowledgement = owner.start(options);
 					taskId = acknowledgement.details.taskId;
 					expect(acknowledgement.details).not.toHaveProperty("result");
 				} else operation = runDelegation(options);
@@ -111,8 +98,6 @@ for (const background of [false, true])
 						() => owner.query(taskId as string).details.result !== undefined,
 					);
 					const queried = owner.query(taskId);
-					await until(() => delivered.length === 1);
-					expect(delivered[0]?.details.result).toEqual(queried.details.result);
 					result = {
 						details: queried.details.result as DelegationResult["details"],
 						content: queried.content,

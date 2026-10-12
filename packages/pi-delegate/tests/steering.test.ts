@@ -146,7 +146,6 @@ function result(status: DelegationStatus): DelegationResult {
 		},
 	};
 }
-const context = { isIdle: () => false, hasPendingMessages: () => false };
 const options: DelegationOptions = {
 	cwd: process.cwd(),
 	args: [],
@@ -174,14 +173,12 @@ for (const terminal of [
 				return finished.promise;
 			},
 			() => result("failed"),
-			() => {},
 		);
 		const foreign = new BackgroundTasks(
 			async () => result("completed"),
 			() => result("failed"),
-			() => {},
 		);
-		const id = owner.start(options, context).details.taskId;
+		const id = owner.start(options).details.taskId;
 		expect((await owner.steer(id, "early")).details.status).toBe("not_ready");
 		expect((await foreign.steer(id, "wrong scope")).details.status).toBe(
 			"unknown_task",
@@ -209,9 +206,8 @@ test("task cancellation rejects immediately before cleanup; invalidation forgets
 	const owner = new BackgroundTasks(
 		async () => finished.promise,
 		() => result("cancelled"),
-		() => {},
 	);
-	const id = owner.start(options, context).details.taskId;
+	const id = owner.start(options).details.taskId;
 	await new Promise<void>((resolve) => setImmediate(resolve));
 	const cancel = owner.cancel(id);
 	expect((await owner.steer(id, "cancel window")).details.status).toBe(
@@ -248,23 +244,16 @@ test.serial(
 				return request.call(this, type, fields) as Promise<T>;
 			},
 		);
-		const owner = new BackgroundTasks(
-			runDelegation,
-			() => result("failed"),
-			() => {},
-		);
+		const owner = new BackgroundTasks(runDelegation, () => result("failed"));
 		try {
-			const id = owner.start(
-				{
-					...options,
-					cliPath: resolve("tests/fixtures/pressure-rpc.mjs"),
-					env: {
-						PRESSURE_FIXTURE_SCENARIO: "settled-before-steer",
-						PRESSURE_FIXTURE_LOG: join(directory, "commands.jsonl"),
-					},
+			const id = owner.start({
+				...options,
+				cliPath: resolve("tests/fixtures/pressure-rpc.mjs"),
+				env: {
+					PRESSURE_FIXTURE_SCENARIO: "settled-before-steer",
+					PRESSURE_FIXTURE_LOG: join(directory, "commands.jsonl"),
 				},
-				context,
-			).details.taskId;
+			}).details.taskId;
 			await collecting.promise;
 			expect(owner.query(id).details.status).toBe("running");
 			expect(

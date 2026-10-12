@@ -83,26 +83,19 @@ test("background cancellation and later query preserve observed child usage", as
 	const started = new Promise<void>((resolve) => {
 		ready = resolve;
 	});
-	const owner = new BackgroundTasks(
-		runDelegation,
-		() => {
-			throw new Error("Unexpected runner throw");
-		},
-		() => {},
-	);
-	const ack = owner.start(
-		{
-			...options("usage-cancel"),
-			status: {
-				observe(record) {
-					if (record.type === "fixture_ready") ready();
-				},
-				accepted() {},
-				finish() {},
+	const owner = new BackgroundTasks(runDelegation, () => {
+		throw new Error("Unexpected runner throw");
+	});
+	const ack = owner.start({
+		...options("usage-cancel"),
+		status: {
+			observe(record) {
+				if (record.type === "fixture_ready") ready();
 			},
+			accepted() {},
+			finish() {},
 		},
-		{ isIdle: () => false, hasPendingMessages: () => false },
-	);
+	});
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		await Promise.race([

@@ -3,6 +3,7 @@
 **Status:** Completed
 **Date:** 2026-10-03
 **Supersedes:** [0001-rpc-subagents-and-parent-only-delegation](./0001-rpc-subagents-and-parent-only-delegation.md)
+**Superseded by:** [ADR 0021](./0021-query-only-background-result-retrieval.md), only the automatic completion-delivery, busy-parent follow-up and idle-parent wake-up policy. The remaining lifecycle and accounting decisions retain their recorded status; ADR 0021 is now realized; see its dated verification section.
 
 ## Context
 

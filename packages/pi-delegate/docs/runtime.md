@@ -75,7 +75,7 @@ Synchronous tasks have scope-local read-only query IDs and retained results. The
 
 ### Shared observations and records
 
-The non-visual task record is accepted after validation and feeds list/query tools, the compact Agents view and the floating overlay from the same observation reducer. It correlates exact taskId with a session-local increasing label, stores selected versus confirmed startup information, and retains available results until existing scope invalidation. It does not launch children, control RPC, own completion delivery or replace the usage ledger.
+The non-visual task record is accepted after validation and feeds list/query tools, the compact Agents view and the floating overlay from the same observation reducer. It correlates exact taskId with a session-local increasing label, stores selected versus confirmed startup information, and retains available results until existing scope invalidation. It does not launch children, control RPC or replace the usage ledger.
 
 The five-second terminal-row timer removes only presentation rows. Paging limits each response, not the retained task set; there is no TTL/count eviction or cross-session persistence. Navigation clears records and closes the old panel while generation guards suppress late observations/results. Existing execution cleanup, cumulative/late usage reconciliation and external workspace/full-output-file lifetimes remain independent. Closing or viewing an overlay neither cancels work nor triggers parent inference.
 
@@ -93,7 +93,7 @@ Background execution is asynchronous work inside the current Pi session, not a p
 
 Normal completion and failure also release the child process and temporary initialization snapshot.
 
-Startup failures automatically include a **model-visible diagnostic tail** of child stderr, limited to the last **16 KiB**, alongside the original error. `details.startupDiagnostics` reports the startup step (`prepare`, `spawn`, `initialize`, `configure`, or `submit`), stderr, a truncation flag, and unexpected exit code/signal when observed. Intentional cleanup exit codes are not presented as the cause of failure. Synchronous results, background completion messages, and `delegate_status` use the same diagnostics.
+Startup failures automatically include a **model-visible diagnostic tail** of child stderr, limited to the last **16 KiB**, alongside the original error. `details.startupDiagnostics` reports the startup step (`prepare`, `spawn`, `initialize`, `configure`, or `submit`), stderr, a truncation flag, and unexpected exit code/signal when observed. Intentional cleanup exit codes are not presented as the cause of failure. Synchronous results and `delegate_status` use the same diagnostics.
 
 **Privacy:** child stderr may contain sensitive extension/configuration output. Failure diagnostics are enabled by default and are not guaranteed to be redacted. Do not log credentials in child startup code. No stderr log artifact is persisted by pi-delegate; the parent host may retain the returned failure text as part of its normal conversation history.
 
@@ -105,7 +105,7 @@ The authoritative readback includes assistant/tool-result messages, standalone u
 
 ### Delegated usage visibility
 
-The Agents area shows latest task usage and an explicitly labelled cumulative **Delegated total**, separate from Pi's parent-session totals. Contributions are replaced by new snapshots, not charged again on queries, completion delivery or final readback. Completed, failed and cancelled consumption survives the five-second row expiry. Branch navigation removes task handles/rows but retains consumed usage, including available late cleanup reconciliation. Session replacement/reload creates a fresh total; no cross-runtime usage history is persisted.
+The Agents area shows latest task usage and an explicitly labelled cumulative **Delegated total**, separate from Pi's parent-session totals. Contributions are replaced by new snapshots, not charged again on queries or final readback. Completed, failed and cancelled consumption survives the five-second row expiry. Branch navigation removes task handles/rows but retains consumed usage, including available late cleanup reconciliation. Session replacement/reload creates a fresh total; no cross-runtime usage history is persisted.
 
 The compact format is `↑8.2k ↓1.1k R20k W0 · $0.04`: ↑ is model input tokens, ↓ is output tokens, R is cache-read tokens and W is cache-write tokens. These are not network bytes, and cache tokens are separate from input. Display rounding does not change stored accounting precision.
 
@@ -121,13 +121,11 @@ Readiness begins only after initialization and original-task start. Cancellation
 
 Manual text uses non-slash-prefixed raw RPC `steer`, preserving trusted handlers and host consumption mode. The prefix is not a sandbox against trusted handlers. The handling receipt is distinct from queue residence, transcript injection and eventual provider input. A control timeout has an uncertain submission outcome and is never automatically retried; it is not a new delivery/completion SLA. Manual-operation failures are separate from task outcomes; underlying transport/execution failures remain governed by normal delegation lifecycle. See [steering usage and receipt fields](usage.md#steering-an-active-background-task).
 
-## Completion delivery
+## Background result retrieval
 
-Background outcomes remain available for task queries independently of the host's completion-message queue. The extension delivers pending outcomes when the originating parent can process them, using a model-visible follow-up message and idle turn triggering.
+Background outcomes remain queryable until the originating session/branch scope is invalidated. The extension does not inject automatic completion messages, queue follow-up work, or trigger a parent turn when a task ends, regardless of whether the parent is busy or idle.
 
-The message API does not provide a durable acknowledgement of model consumption. Delivery does not promise exactly-once inference; querying the task is the recovery path if a completion message is cleared or not processed.
-
-An observed completion-message exception is reported separately from execution status. It neither rewrites a successful task as failed nor removes listing/details/result access. The record's `submitted` state is only successful host submission, never evidence of parent-model consumption.
+Use `delegate_list` for discovery and `delegate_status` for retained results, including failed, cancelled and incomplete outcomes. Synchronous delegation still returns its result directly. Querying does not charge delegated usage again and does not establish model consumption or task acceptance.
 
 ## Child UI requests
 

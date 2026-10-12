@@ -12,10 +12,7 @@ import {
 	SettingsManager,
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
-import {
-	BACKGROUND_MESSAGE,
-	type BackgroundTaskDetails,
-} from "../src/background.ts";
+import type { BackgroundTaskDetails } from "../src/background.ts";
 
 import { statusUI } from "./fixtures/status-ui.ts";
 
@@ -53,7 +50,7 @@ function tool(session: AgentSession, name: string) {
 }
 function completions(session: AgentSession) {
 	return session.messages.filter(
-		(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+		(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
 	);
 }
 
@@ -62,7 +59,7 @@ function completions(session: AgentSession) {
 // startup or manual visual E2E is claimed.
 for (const busy of [false, true]) {
 	test.serial(
-		`real Pi TUI-mode runtime: gated child completion ${busy ? "waits for busy parent" : "wakes idle parent"}`,
+		`real Pi TUI-mode runtime: gated child completion ${busy ? "does not enqueue busy-parent work" : "does not wake idle parent"}`,
 		async () => {
 			const cwd = await mkdtemp(join(tmpdir(), "background-tui-"));
 			const agentDir = join(cwd, "agent");
@@ -263,40 +260,25 @@ for (const busy of [false, true]) {
 					await writeFile(join(logs, "parent-release"), "release");
 					await busyRun;
 				}
-				// No prompt after release: observe automatic model-visible delivery and turn settlement.
-				const seen = await eventually(
-					() =>
-						parent.messages.find(
-							(m) =>
-								m.role === "assistant" &&
-								textOf(m).startsWith("MODEL_SAW:") &&
-								textOf(m).includes(details.taskId),
-						),
-					Boolean,
-					"automatic completion turn",
-				);
-				await eventually(
-					() => settled,
-					(n) => n > settledBeforeRelease + (busy ? 1 : 0),
-					"wake turn settled",
-				);
+				// Completion must not wake an idle parent or enqueue a follow-up behind BUSY.
+				await new Promise((resolve) => setTimeout(resolve, 100));
 				await parent.waitForIdle();
-				expect(starts).toBe(startsBeforeRelease + (busy ? 2 : 1));
-				expect(completions(parent)).toHaveLength(1);
-				if (!seen) throw new Error("Missing model consumption");
-				expect(textOf(seen)).toContain(`${details.taskId}: completed`);
-				expect(textOf(seen)).toContain("CHILD_RESULT:Task:\ngated TUI proof");
-				expect(textOf(seen)).toContain("explicit-only");
-				if (busy) {
-					const finished = parent.messages.findIndex(
-						(m) => textOf(m) === "PARENT_BUSY_FINISHED",
-					);
-					const delivered = parent.messages.findIndex(
-						(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
-					);
-					expect(finished).toBeGreaterThan(-1);
-					expect(delivered).toBeGreaterThan(finished);
-				}
+				expect(starts).toBe(startsBeforeRelease + (busy ? 1 : 0));
+				expect(settled).toBe(settledBeforeRelease + (busy ? 1 : 0));
+				expect(completions(parent)).toHaveLength(0);
+				expect(parent.pendingMessageCount).toBe(0);
+				await parent.prompt(`STATUS ${details.taskId}`);
+				await parent.waitForIdle();
+				const queried = tool(parent, "delegate_status");
+				expect(queried.details).toMatchObject({
+					taskId: details.taskId,
+					status: "completed",
+				});
+				expect(textOf(queried)).toContain(
+					"CHILD_RESULT:Task:\ngated TUI proof",
+				);
+				expect(textOf(queried)).toContain("explicit-only");
+				expect(queried.usage).toBeUndefined();
 				expect(() => process.kill(child.pid, 0)).toThrow();
 				expect(statusHost.frame()).toContain("└─ completed");
 				expect(statusHost.frame()).toContain("1 turn · pressure: none");

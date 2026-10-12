@@ -84,6 +84,8 @@ By default, the call waits for the child's final outcome. To continue working wh
 }
 ```
 
+Background outcomes do not send automatic completion messages or wake the parent. Use `delegate_list` to discover tasks and `delegate_status` to retrieve results on demand.
+
 | Tool | Purpose |
 | --- | --- |
 | `delegate` | Start a fresh synchronous or background subagent. |

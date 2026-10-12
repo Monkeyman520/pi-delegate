@@ -30,15 +30,6 @@ export interface TaskDetails extends TaskSummary {
 	currentTools: string[];
 	pressure: { policy: PressurePolicy; accepted: TaskProgress["pressure"] };
 	usage: TaskProgress["usageValue"];
-	delivery: {
-		status:
-			| "not_applicable"
-			| "awaiting_result"
-			| "pending"
-			| "submitted"
-			| "failed";
-		error?: string;
-	};
 }
 export interface TaskPage {
 	tasks: TaskSummary[];
@@ -62,7 +53,6 @@ export class TaskRecord {
 	private effectiveCwd?: string;
 	private control?: SteeringControl;
 	private cancelling = false;
-	private delivery: TaskDetails["delivery"];
 	readonly input: TaskInput;
 
 	constructor(
@@ -78,10 +68,6 @@ export class TaskRecord {
 		);
 		this.input = { ...structuredClone(input), task: "", title };
 		this.progress = new TaskProgress(label, title, time, valid, notify);
-		this.delivery = {
-			status:
-				input.mode === "background" ? "awaiting_result" : "not_applicable",
-		};
 	}
 	spawned = (cwd: string): void => {
 		if (!this.valid()) return;
@@ -96,14 +82,6 @@ export class TaskRecord {
 	cancelRequested = (): void => {
 		if (!this.valid() || this.result) return;
 		this.cancelling = true;
-		this.notify();
-	};
-	delivered = (error?: string): void => {
-		if (!this.valid()) return;
-		this.delivery =
-			error !== undefined
-				? { status: "failed", error }
-				: { status: "submitted" };
 		this.notify();
 	};
 	complete(result: DelegationResult): DelegationResult {
@@ -121,7 +99,6 @@ export class TaskRecord {
 		this.progress.usageValue = structuredClone(result.usage);
 		this.control = undefined;
 		this.cancelling = false;
-		if (this.input.mode === "background") this.delivery = { status: "pending" };
 		this.progress.finish(result.details.status);
 		this.notify();
 		return identified;
@@ -185,7 +162,6 @@ export class TaskRecord {
 				accepted: this.progress.pressure,
 			},
 			usage: structuredClone(this.progress.usageValue),
-			delivery: { ...this.delivery },
 		};
 	}
 }

@@ -355,7 +355,6 @@ export class TaskPanel {
 								`Pressure accepted: ${task.pressure.accepted} (not consumption/compliance)`,
 								`Warning: ${task.pressure.policy.warning.afterSeconds}s / ${task.pressure.policy.warning.afterTurns} turns; urgent: ${task.pressure.policy.urgent.afterSeconds}s / ${task.pressure.policy.urgent.afterTurns} turns`,
 								`Usage: ${formatUsage(task.usage)} (available, possibly partial; cost estimate)`,
-								`Delivery: ${task.delivery.status}${task.delivery.error ? ` · ${task.delivery.error}` : ""} (not model consumption)`,
 								`Controls: ${task.controls.reason ?? "background control ready"}`,
 							].join("\n");
 					this.content.setText(

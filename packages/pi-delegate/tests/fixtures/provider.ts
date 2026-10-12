@@ -211,6 +211,16 @@ export default function fixture(pi: ExtensionAPI): void {
 					stream.push({ type: "done", reason: "toolUse", message });
 					stream.end();
 				};
+				const currentResults = context.messages.slice(
+					user ? context.messages.indexOf(user) + 1 : 0,
+				);
+				if (
+					prompt.startsWith("STATUS ") &&
+					!currentResults.some((m) => m.role === "toolResult")
+				) {
+					toolCall("delegate_status", { taskId: prompt.slice(7) });
+					return;
+				}
 				if (prompt.startsWith("CONFIG ") && !last) {
 					toolCall("delegate", JSON.parse(prompt.slice(7)));
 					return;

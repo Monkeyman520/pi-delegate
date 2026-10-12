@@ -35,7 +35,7 @@ Pass the absolute workspace as `delegate.cwd`, not only in task text. Include in
 - Instructions not to modify the main workspace, manage other worktrees, merge into the parent branch, or clean up the workspace.
 - A request for a reviewable artifact and the report below.
 
-The parent's conversation is not copied. For background work keep the originating Pi session alive and retain task IDs. cwd is resolved at submission; an invalid directory fails without creation or fallback. After a child starts, synchronous result metadata `details.cwd` identifies its absolute startup path; background terminal queries/completion messages carry it at `details.result.cwd`. The initial background acknowledgement is not an effective-directory result. Queued cancellation and pre-spawn failures have no effective cwd metadata.
+The parent's conversation is not copied. For background work keep the originating Pi session alive and retain task IDs. cwd is resolved at submission; an invalid directory fails without creation or fallback. After a child starts, synchronous result metadata `details.cwd` identifies its absolute startup path; background terminal queries carry it at `details.result.cwd`. The initial background acknowledgement is not an effective-directory result. Queued cancellation and pre-spawn failures have no effective cwd metadata.
 
 ## 4. Require actual change artifacts and an honest report
 

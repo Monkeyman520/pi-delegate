@@ -15,10 +15,7 @@ import {
 	SettingsManager,
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
-import {
-	BACKGROUND_MESSAGE,
-	type BackgroundTaskDetails,
-} from "../src/background.ts";
+import type { BackgroundTaskDetails } from "../src/background.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function eventually<T>(
@@ -54,7 +51,7 @@ function tool(s: AgentSession, name: string) {
 }
 function completions(s: AgentSession) {
 	return s.messages.filter(
-		(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+		(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
 	);
 }
 function cleaned(c: Child, logs: string) {
@@ -277,7 +274,7 @@ test.serial(
 );
 
 test.serial(
-	"SDK reload cancels held child, suppresses locally pending completion, and installs usable fresh task scope",
+	"SDK reload cancels held child, invalidates retained results, and installs usable fresh task scope",
 	async () => {
 		await withRuntime(async (h) => {
 			const s = h.runtime.session;
@@ -302,7 +299,7 @@ test.serial(
 			);
 			await sleep(60);
 			expect(completions(s)).toHaveLength(0);
-			// Keep a host queue item so abort cannot deliver before reload invalidates local ownership.
+			// Exercise queued work and abort before reload invalidates retained results.
 			await s.followUp("discard before reload");
 			await s.abort();
 			await busy;
@@ -317,17 +314,19 @@ test.serial(
 			await h.releaseChild();
 			await eventually(
 				() =>
-					s.messages.some(
-						(m) =>
-							m.role === "assistant" &&
-							textOf(m).startsWith("MODEL_SAW:") &&
-							textOf(m).includes(fresh.id),
-					),
+					existsSync(join(h.logs, `${fresh.child.pid}.closed`)) &&
+					!existsSync(dirname(fresh.child.snapshot)),
 				Boolean,
-				"fresh automatic wake",
+				"fresh child cleanup",
 			);
+			await sleep(100);
+			expect(completions(s)).toHaveLength(0);
+			await s.prompt(`STATUS ${fresh.id}`);
 			await s.waitForIdle();
-			expect(completions(s)).toHaveLength(1);
+			expect(tool(s, "delegate_status").details).toMatchObject({
+				taskId: fresh.id,
+				status: "completed",
+			});
 			cleaned(fresh.child, h.logs);
 		});
 	},

@@ -223,22 +223,12 @@ test("a crashed child with inherited stderr pipes returns bounded diagnostics wi
 	}
 }, 10_000);
 
-test("background query and completion delivery preserve startup diagnostics", async () => {
-	let delivered: ReturnType<BackgroundTasks["query"]> | undefined;
-	const owner = new BackgroundTasks(
-		runDelegation,
-		() => {
-			throw new Error("Unexpected runner throw");
-		},
-		(result) => {
-			delivered = result;
-		},
-	);
+test("background queries preserve startup diagnostics", async () => {
+	const owner = new BackgroundTasks(runDelegation, () => {
+		throw new Error("Unexpected runner throw");
+	});
 	try {
-		const ack = owner.start(options("split"), {
-			isIdle: () => true,
-			hasPendingMessages: () => false,
-		});
+		const ack = owner.start(options("split"));
 		const deadline = Date.now() + 4_000;
 		while (owner.query(ack.details.taskId).details.status === "initializing") {
 			if (Date.now() > deadline) throw new Error("Child did not fail in time");
@@ -250,12 +240,6 @@ test("background query and completion delivery preserve startup diagnostics", as
 			"启动失败：雪🌱",
 		);
 		expect(query.content[0].text).toContain("启动失败：雪🌱");
-		owner.scheduleDelivery();
-		await new Promise((resolve) => setTimeout(resolve, 20));
-		expect(delivered?.details.result?.startupDiagnostics).toEqual(
-			query.details.result?.startupDiagnostics,
-		);
-		expect(delivered?.content).toEqual(query.content);
 	} finally {
 		await owner.invalidate(true);
 	}

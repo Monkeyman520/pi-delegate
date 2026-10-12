@@ -56,27 +56,24 @@ for (const status of [
 	"cancelled",
 ] as const) {
 	test(`background retains ${status}, bounded result metadata and separate usage`, async () => {
-		const messages: BackgroundTaskResult[] = [];
 		let calls = 0;
-		const tasks = new BackgroundTasks(
-			async () => {
-				calls++;
-				return {
-					...result(status),
-					details: {
-						status,
-						stopReason: status === "incomplete" ? "length" : "stop",
-						fullOutputPath: "output.txt",
-					},
-				};
-			},
-			failure,
-			(message) => messages.push(message),
-		);
-		const accepted = tasks.start(options, idle);
+		const tasks = new BackgroundTasks(async () => {
+			calls++;
+			return {
+				...result(status),
+				details: {
+					status,
+					stopReason: status === "incomplete" ? "length" : "stop",
+					fullOutputPath: "output.txt",
+				},
+			};
+		}, failure);
+		const accepted = tasks.start(options);
 		expect(calls).toBe(1);
 		expect(accepted.details.status).toBe("queued");
-		await waitFor(() => messages.length === 1);
+		await waitFor(
+			() => tasks.query(accepted.details.taskId).details.result !== undefined,
+		);
 		const final = tasks.query(accepted.details.taskId);
 		expect(final.details.status).toBe(status);
 		expect(final.isError).toBe(status === "failed" || status === "cancelled");
@@ -84,66 +81,33 @@ for (const status of [
 		expect(final.details.usage?.totalTokens).toBe(3);
 		expect(final.content[0].text).toContain(BACKGROUND_USAGE_NOTICE);
 		expect(final).not.toHaveProperty("usage");
-		expect(messages[0]).toEqual(final);
 		await tasks.cancel(accepted.details.taskId);
 		expect(tasks.query(accepted.details.taskId).details.status).toBe(status);
-		tasks.scheduleDelivery();
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(messages).toHaveLength(1);
 		await tasks.invalidate(true);
 	});
 }
-
-test("busy or queued parent work postpones delivery without losing query results", async () => {
-	let busy = true;
-	let queued = false;
-	const messages: BackgroundTaskResult[] = [];
-	const tasks = new BackgroundTasks(
-		async () => result(),
-		failure,
-		(message) => messages.push(message),
-	);
-	const { taskId } = tasks.start(options, {
-		isIdle: () => !busy,
-		hasPendingMessages: () => queued,
-	}).details;
-	await waitFor(() => tasks.query(taskId).details.status === "completed");
-	await new Promise((resolve) => setTimeout(resolve, 10));
-	expect(messages).toHaveLength(0);
-	busy = false;
-	queued = true;
-	tasks.scheduleDelivery();
-	await new Promise((resolve) => setTimeout(resolve, 10));
-	expect(messages).toHaveLength(0);
-	queued = false;
-	// No host event follows clear_queue: pending delivery must notice eligibility itself.
-	await waitFor(() => messages.length === 1);
-	await tasks.invalidate(true);
-});
 
 test("parent abort is detached; explicit task cancellation awaits cleanup", async () => {
 	const parent = new AbortController();
 	let childSignal: AbortSignal | undefined;
 	let cleaned = false;
-	const tasks = new BackgroundTasks(
-		async ({ signal, ui }) => {
-			expect(ui).toBeUndefined();
-			childSignal = signal;
-			await new Promise<void>((resolve) =>
-				signal?.addEventListener("abort", () => setTimeout(resolve, 10), {
-					once: true,
-				}),
-			);
-			cleaned = true;
-			return result("cancelled");
-		},
-		failure,
-		() => {},
-	);
-	const { taskId } = tasks.start(
-		{ ...options, signal: parent.signal, ui: async () => undefined },
-		idle,
-	).details;
+	const tasks = new BackgroundTasks(async ({ signal, ui }) => {
+		expect(ui).toBeUndefined();
+		childSignal = signal;
+		await new Promise<void>((resolve) =>
+			signal?.addEventListener("abort", () => setTimeout(resolve, 10), {
+				once: true,
+			}),
+		);
+		cleaned = true;
+		return result("cancelled");
+	}, failure);
+	const { taskId } = tasks.start({
+		...options,
+		signal: parent.signal,
+		ui: async () => undefined,
+	}).details;
 	await waitFor(() => childSignal !== undefined);
 	parent.abort();
 	expect(childSignal?.aborted).toBe(false);
@@ -155,23 +119,19 @@ test("parent abort is detached; explicit task cancellation awaits cleanup", asyn
 });
 
 for (const closing of [false, true]) {
-	test(`invalidation before fast completion suppresses old delivery (closing=${closing})`, async () => {
-		const messages: BackgroundTaskResult[] = [];
+	test(`invalidation before fast completion removes old task access (closing=${closing})`, async () => {
 		const tasks = new BackgroundTasks(
 			async ({ signal }) => result(signal?.aborted ? "cancelled" : "completed"),
 			failure,
-			(message) => messages.push(message),
 		);
-		const old = tasks.start(options, idle).details.taskId;
+		const old = tasks.start(options).details.taskId;
 		await tasks.invalidate(closing);
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(messages).toHaveLength(0);
 		expect(tasks.query(old).isError).toBe(true);
-		if (closing) expect(() => tasks.start(options, idle)).toThrow("closing");
+		if (closing) expect(() => tasks.start(options)).toThrow("closing");
 		else {
-			const fresh = tasks.start(options, idle).details.taskId;
-			await waitFor(() => messages.length === 1);
-			expect(messages[0].details.taskId).toBe(fresh);
+			const fresh = tasks.start(options).details.taskId;
+			await waitFor(() => tasks.query(fresh).details.result !== undefined);
 			await tasks.invalidate(true);
 		}
 	});
@@ -181,7 +141,6 @@ for (const closing of [false, true]) {
 	for (const withCurrent of [false, true]) {
 		for (const oldFirst of [false, true]) {
 			test(`overlapping invalidation awaits detached cleanup (closing=${closing}, current=${withCurrent}, oldFirst=${oldFirst})`, async () => {
-				const messages: BackgroundTaskResult[] = [];
 				const runs = new Map<
 					string,
 					{ signal: AbortSignal; finish: () => void }
@@ -202,10 +161,9 @@ for (const closing of [false, true]) {
 						return result(signal.aborted ? "cancelled" : "completed");
 					},
 					failure,
-					(message) => messages.push(message),
 				);
 				const start = (task: string) =>
-					tasks.start({ ...options, task }, idle).details.taskId;
+					tasks.start({ ...options, task }).details.taskId;
 				const tick = () =>
 					new Promise<void>((resolve) => setImmediate(resolve));
 				const old = start("old");
@@ -251,60 +209,40 @@ for (const closing of [false, true]) {
 				if (!oldFirst || withCurrent) expect(secondDone).toBe(false);
 				runs.get(oldFirst ? "current" : "old")?.finish();
 				await Promise.all([first, second]);
-				expect(messages).toHaveLength(0);
 				if (fresh) {
 					expect(runs.get("fresh")?.signal.aborted).toBe(false);
 					expect(tasks.query(fresh).details.status).toBe("queued");
 					runs.get("fresh")?.finish();
-					await waitFor(() => messages.length === 1);
-					expect(messages[0].details.taskId).toBe(fresh);
+					await waitFor(
+						() => tasks.query(fresh as string).details.result !== undefined,
+					);
 				}
 				await tasks.invalidate(true);
 			});
 		}
 	}
 }
-test("invalidating already completed queued results prevents cross-scope delivery", async () => {
-	const messages: BackgroundTaskResult[] = [];
-	let busy = true;
-	const tasks = new BackgroundTasks(
-		async () => result(),
-		failure,
-		(message) => messages.push(message),
-	);
-	const { taskId } = tasks.start(options, {
-		...idle,
-		isIdle: () => !busy,
-	}).details;
+test("invalidating completed results removes cross-scope access", async () => {
+	const tasks = new BackgroundTasks(async () => result(), failure);
+	const { taskId } = tasks.start(options).details;
 	await waitFor(() => tasks.query(taskId).details.status === "completed");
 	await tasks.invalidate();
-	busy = false;
-	tasks.scheduleDelivery();
 	await new Promise((resolve) => setTimeout(resolve, 10));
-	expect(messages).toHaveLength(0);
 	expect(tasks.query(taskId).isError).toBe(true);
 	await tasks.invalidate(true);
 });
 
-test("unexpected runner and delivery failures are observable without unhandled work", async () => {
-	const tasks = new BackgroundTasks(
-		async () => {
-			throw new Error("startup failure");
-		},
-		failure,
-		() => {
-			throw new Error("runtime invalid");
-		},
-	);
-	const { taskId } = tasks.start(options, idle).details;
-	await waitFor(() => tasks.query(taskId).details.deliveryError !== undefined);
-	expect(tasks.query(taskId).details.status).toBe("failed");
-	expect(tasks.query(taskId).details.deliveryError).toBe("runtime invalid");
+test("unexpected runner failures are observable without unhandled work", async () => {
+	const tasks = new BackgroundTasks(async () => {
+		throw new Error("startup failure");
+	}, failure);
+	const { taskId } = tasks.start(options).details;
+	await waitFor(() => tasks.query(taskId).details.status === "failed");
 	expect(tasks.query("unknown").isError).toBe(true);
 	expect((await tasks.cancel("unknown")).isError).toBe(true);
 	await tasks.invalidate(true);
 	expect(() =>
-		tasks.start({ ...options, signal: AbortSignal.abort() }, idle),
+		tasks.start({ ...options, signal: AbortSignal.abort() }),
 	).toThrow();
 });
 
@@ -338,47 +276,65 @@ function registration(run: typeof import("../src/delegate.ts").runDelegation) {
 	return { tools, hooks, messages, ctx };
 }
 
-test("registered TUI tools acknowledge, query and trigger model-visible completion", async () => {
-	const { tools, hooks, messages, ctx } = registration(async () => result());
-	const start = await tools
-		.get("delegate")
-		?.execute(
-			"call",
-			{ task: "task", background: true },
-			undefined,
-			undefined,
-			ctx,
-		);
-	if (!start) throw new Error("Missing delegation acknowledgement");
-	const taskId = (start.details as BackgroundTaskResult["details"]).taskId;
-	expect((start.details as BackgroundTaskResult["details"]).status).toBe(
-		"initializing",
-	);
-	await waitFor(() => messages.length === 1);
-	expect(messages[0]).toMatchObject({
-		message: {
-			customType: "pi-delegate:completed",
-			details: { taskId, status: "completed" },
-		},
-		policy: { triggerTurn: true, deliverAs: "followUp" },
-	});
-	const queried = await tools
-		.get("delegate_status")
-		?.execute("query", { taskId }, undefined, undefined, ctx);
-	expect(queried?.details).toMatchObject({
-		status: "completed",
-		usage: { totalTokens: 3 },
-	});
-	expect(queried).not.toHaveProperty("usage");
-	await hooks.get("session_before_tree")?.({
-		preparation: { targetId: "new", oldLeafId: "old" },
-	});
-	const stale = await tools
-		.get("delegate_status")
-		?.execute("query", { taskId }, undefined, undefined, ctx);
-	expect(stale?.isError).toBe(true);
-	await hooks.get("session_shutdown")?.({ reason: "reload" });
-});
+for (const status of [
+	"completed",
+	"incomplete",
+	"failed",
+	"cancelled",
+] as const) {
+	for (const busy of [false, true]) {
+		test(`registered TUI tools retain ${status} without messages (${busy ? "busy/queued" : "idle"} parent)`, async () => {
+			let calls = 0;
+			const { tools, hooks, messages, ctx } = registration(async () => {
+				calls++;
+				return result(status);
+			});
+			ctx.isIdle = () => !busy;
+			ctx.hasPendingMessages = () => busy;
+			expect(tools.get("delegate")?.description).not.toContain(
+				"deliver completion automatically",
+			);
+			expect(tools.get("delegate_status")?.description).not.toContain(
+				"delivered automatically",
+			);
+			const start = await tools
+				.get("delegate")
+				?.execute(
+					"call",
+					{ task: "task", background: true },
+					undefined,
+					undefined,
+					ctx,
+				);
+			if (!start) throw new Error("Missing delegation acknowledgement");
+			const taskId = (start.details as BackgroundTaskResult["details"]).taskId;
+			expect((start.details as BackgroundTaskResult["details"]).status).toBe(
+				"initializing",
+			);
+			await waitFor(() => calls === 1);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(messages).toHaveLength(0);
+			expect(hooks.has("agent_settled")).toBe(false);
+			expect(hooks.has("session_compact")).toBe(false);
+			const queried = await tools
+				.get("delegate_status")
+				?.execute("query", { taskId }, undefined, undefined, ctx);
+			expect(queried?.details).toMatchObject({
+				status: status,
+				usage: { totalTokens: 3 },
+			});
+			expect(queried).not.toHaveProperty("usage");
+			await hooks.get("session_before_tree")?.({
+				preparation: { targetId: "new", oldLeafId: "old" },
+			});
+			const stale = await tools
+				.get("delegate_status")
+				?.execute("query", { taskId }, undefined, undefined, ctx);
+			expect(stale?.isError).toBe(true);
+			await hooks.get("session_shutdown")?.({ reason: "reload" });
+		});
+	}
+}
 
 test("shutdown hooks await cleanup already detached by navigation", async () => {
 	let finish: (() => void) | undefined;

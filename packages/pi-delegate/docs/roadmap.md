@@ -15,7 +15,7 @@ Implemented in the current source: `delegate_list`, unified `delegate_status`, r
 - [x] Expose a capability such as `delegate_list` to list queued, active, and terminal tasks in the current session/branch scope, without requiring the caller to remember each `taskId`.
 - [x] Provide consistent task details: title, `taskId`, cwd, model, elapsed time, turns, current tool, pressure, usage, and available result. Distinguish requested configuration from confirmed effective configuration.
 - [x] Establish an explicit relationship between TUI numeric labels and `taskId`; provide a TUI task panel for inspecting results, cancelling work, and sending additional instructions.
-- [x] Keep execution outcome distinct from completion-message delivery failure. Task discovery and result access should not depend on the short-lived terminal status row.
+- [x] Retain outcomes for on-demand queries without automatic completion messages or parent wake-up. Task discovery and result access do not depend on the short-lived terminal status row.
 
 ### 2. Reviewable, traceable result handoff
 

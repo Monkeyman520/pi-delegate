@@ -8,10 +8,7 @@ import type {
 	ExtensionAPI,
 	ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-	type BackgroundTaskResult,
-	BackgroundTasks,
-} from "../src/background.ts";
+import { BackgroundTasks } from "../src/background.ts";
 import { selectCwd } from "../src/cwd.ts";
 import {
 	type DelegationOptions,
@@ -238,16 +235,11 @@ test("different-directory trust uses native target resolution or explicit CLI ov
 });
 
 for (const scenario of ["usage-completed", "usage-exit", "usage-cancel"]) {
-	test(`${scenario}: observed cwd survives synchronous and background outcomes/query/delivery`, async () => {
+	test(`${scenario}: observed cwd survives synchronous and background outcomes/query`, async () => {
 		const directory = await mkdtemp(join(tmpdir(), "delegate-result-"));
-		const delivered: BackgroundTaskResult[] = [];
-		const owner = new BackgroundTasks(
-			runDelegation,
-			() => {
-				throw new Error("Unexpected failure");
-			},
-			(result) => delivered.push(result),
-		);
+		const owner = new BackgroundTasks(runDelegation, () => {
+			throw new Error("Unexpected failure");
+		});
 		try {
 			const controller = new AbortController();
 			const sync = await runDelegation({
@@ -266,19 +258,16 @@ for (const scenario of ["usage-completed", "usage-exit", "usage-cancel"]) {
 			const started = new Promise<void>((resolve) => {
 				ready = resolve;
 			});
-			const ack = owner.start(
-				{
-					...options(directory, scenario),
-					status: {
-						observe(record) {
-							if (record.type === "fixture_ready") ready();
-						},
-						accepted() {},
-						finish() {},
+			const ack = owner.start({
+				...options(directory, scenario),
+				status: {
+					observe(record) {
+						if (record.type === "fixture_ready") ready();
 					},
+					accepted() {},
+					finish() {},
 				},
-				{ isIdle: () => true, hasPendingMessages: () => false },
-			);
+			});
 			if (scenario === "usage-cancel") {
 				await started;
 				await owner.cancel(ack.details.taskId);
@@ -292,9 +281,6 @@ for (const scenario of ["usage-completed", "usage-exit", "usage-cancel"]) {
 			expect(owner.query(ack.details.taskId).details.result?.cwd).toBe(
 				directory,
 			);
-			owner.scheduleDelivery();
-			for (let i = 0; i < 100 && !delivered.length; i++) await Bun.sleep(10);
-			expect(delivered[0]?.details.result?.cwd).toBe(directory);
 			expect(existsSync(directory)).toBe(true);
 		} finally {
 			await owner.invalidate(true);

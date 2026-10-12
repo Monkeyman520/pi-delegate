@@ -8,10 +8,7 @@ import {
 	getPackageDir,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import {
-	BACKGROUND_MESSAGE,
-	type BackgroundTaskDetails,
-} from "../src/background.ts";
+import type { BackgroundTaskDetails } from "../src/background.ts";
 import type { DelegationDetails } from "../src/delegate.ts";
 import { resolveCli } from "../src/delegate.ts";
 import { RpcProcess } from "../src/rpc.ts";
@@ -250,20 +247,16 @@ class Host {
 			"parent idle",
 		);
 	}
-	async consumed(id: string): Promise<Message[]> {
-		const messages = await eventually(
-			() => this.messages(),
-			(ms) =>
-				ms.some(
-					(m) =>
-						m.role === "assistant" &&
-						textOf(m).startsWith("PARENT_SAW:") &&
-						textOf(m).includes(`[Background task ${id}:`),
-				),
-			"parent model consumes completion",
+	async queryResult(id: string): Promise<Message[]> {
+		await eventually(
+			async () => {
+				await this.prompt(`STATUS ${id}`);
+				return this.messages();
+			},
+			(ms) => background(tool(ms, "delegate_status")).result !== undefined,
+			"on-demand terminal result",
 		);
-		await this.idle();
-		return messages;
+		return this.messages();
 	}
 	async cleaned(child: Child, graceful = true) {
 		await eventually(
@@ -531,18 +524,20 @@ test("pressure real RPC: background pressure survives initiating parent completi
 		).toBe("running");
 		await host.release(child, "tool-0");
 		await host.finish(child, 1);
-		const all = await host.consumed(id);
+		const all = await host.queryResult(id);
 		assertParentArguments(all, [call]);
 		assertStages(host, child);
 		expect(
 			all.filter(
-				(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+				(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
 			),
-		).toHaveLength(1);
+		).toHaveLength(0);
 		expect(
 			all.some(
 				(m) =>
-					m.role === "assistant" && textOf(m).includes(report(call.task.id)),
+					m.role === "toolResult" &&
+					m.toolName === "delegate_status" &&
+					textOf(m).includes(report(call.task.id)),
 			),
 		).toBe(true);
 		await host.prompt(`STATUS ${id}`);
@@ -603,7 +598,7 @@ test("pressure real RPC: cancelling the initiating background parent turn does n
 		await host.cleaned(child);
 		const count = host.trace(child.pid).length;
 		await host.release(child, "tool-4"); // A late file release cannot resurrect the cancelled child.
-		await host.consumed(id);
+		await host.queryResult(id);
 		await host.prompt(`STATUS ${id}`);
 		expect(
 			background(tool(await host.messages(), "delegate_status")).status,
@@ -667,7 +662,7 @@ test("pressure real RPC: concurrent sync/background calls keep distinct threshol
 			3, 5,
 		]);
 		await host.finish(bg, 5, 8);
-		await host.consumed(background(ack).taskId);
+		await host.queryResult(background(ack).taskId);
 		assertStages(host, bg, 8);
 		await host.cleaned(sync);
 		await host.cleaned(bg);
@@ -781,7 +776,7 @@ test("pressure real RPC: fast completion clears deadlines and cannot create a ne
 		expect(host.children()).toHaveLength(1);
 		expect(
 			(await host.messages()).filter(
-				(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+				(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
 			),
 		).toHaveLength(0);
 	});
@@ -805,7 +800,7 @@ test("pressure real RPC: explicit background cancel during gated initialization 
 		expect(models(host.trace(child.pid))).toHaveLength(0);
 		expect(receipts(host.trace(child.pid))).toHaveLength(0);
 		await host.release(child, "init");
-		await host.consumed(id);
+		await host.queryResult(id);
 		expect(models(host.trace(child.pid))).toHaveLength(0);
 	}, true);
 }, 30_000);
@@ -872,7 +867,8 @@ for (const boundary of ["tree", "shutdown"] as const) {
 				expect(textOf(query)).toContain(`Unknown delegated task: ${id}`);
 				expect(
 					(await host.messages()).filter(
-						(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+						(m) =>
+							m.role === "custom" && m.customType === "pi-delegate:completed",
 					),
 				).toHaveLength(0);
 			}

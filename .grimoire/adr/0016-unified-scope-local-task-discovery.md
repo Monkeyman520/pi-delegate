@@ -3,6 +3,7 @@
 **Status:** Testing
 **Date:** 2026-10-08
 **Supersedes:** [0004-task-addressed-runtime-steering](./0004-task-addressed-runtime-steering.md), only its exclusion of public synchronous task handles. Its background-only steering, runner ownership, readiness, receipt, sequencing and lifecycle decisions remain in force.
+**Superseded by:** [ADR 0021](./0021-query-only-background-result-retrieval.md), only the automatic completion-delivery responsibility and observations retained here. Discovery, on-demand results, retention and control boundaries remain unchanged; ADR 0021 is now realized; see its dated verification section.
 
 ## Context
 

@@ -70,7 +70,7 @@ Results use the existing text channels, previews and full-output files. Failure,
 
 Both modes resolve cwd to an absolute path at submission, before queueing. Explicit non-string values (including `null`), blank paths, missing paths, non-directory paths or inaccessible paths fail explicitly; the plugin never creates a target or falls back to the parent directory. Startup rechecks the selected path if it became unusable while queued. Directory selection does not change the parent's cwd or restrict filesystem access.
 
-After observed child spawn, synchronous results expose `details.cwd`; background terminal query/completion results expose `details.result.cwd`. These are absolute startup paths, retained on later failure/cancellation, not a claim that initialization succeeded or the task completed. Queued cancellation and pre-spawn failure have no effective cwd metadata.
+After observed child spawn, synchronous results expose `details.cwd`; background terminal query results expose `details.result.cwd`. These are absolute startup paths, retained on later failure/cancellation, not a claim that initialization succeeded or the task completed. Queued cancellation and pre-spawn failure have no effective cwd metadata.
 
 The selected directory drives normal Pi project/context discovery. Inherited resource paths retain their parent/startup meaning. A different directory uses native target project trust (with explicit parent CLI `--approve`/`--no-approve` overrides replayed); the parent's directory-specific trust decision is not transferred. Incompatible tool reconstruction fails before task execution. See [runtime inheritance](runtime.md#tool-and-configuration-inheritance).
 
@@ -90,7 +90,7 @@ Both fields work independently in synchronous and background mode. Omitted value
 
 After inherited tools initialize, the runner selects the exact model, applies the requested level using Pi's native capability adjustment, and reads back the configuration before submitting the task. Unavailable child providers/models/auth configuration fail explicitly without fallback. Overrides do not change the parent's selection or saved defaults.
 
-Terminal synchronous results expose `details.configuration.requested` and, when startup was confirmed, `details.configuration.effective`; each contains `model: { provider, id }` and `thinkingLevel`. Background query/completion results carry these under `details.result.configuration`. The effective level can differ from the request (for example, a non-reasoning model uses `off`). Pre-confirmation failures have no effective value; later execution failures/cancellation retain confirmed startup values. This is startup configuration, not proof of provider consumption or immutable routing during execution.
+Terminal synchronous results expose `details.configuration.requested` and, when startup was confirmed, `details.configuration.effective`; each contains `model: { provider, id }` and `thinkingLevel`. Background query results carry these under `details.result.configuration`. The effective level can differ from the request (for example, a non-reasoning model uses `off`). Pre-confirmation failures have no effective value; later execution failures/cancellation retain confirmed startup values. This is startup configuration, not proof of provider consumption or immutable routing during execution.
 
 ### Synchronous execution
 
@@ -121,13 +121,9 @@ Background mode is supported only in long-lived TUI and RPC parent sessions. Req
 
 The call immediately returns `details.taskId` and its applicable `details.status`: `queued`, `initializing`, or `running`. This acknowledges acceptance, not child readiness or successful completion. The parent can continue other work while waiting, initialization and execution proceed.
 
-When the child reaches a terminal outcome, the extension sends a model-visible `pi-delegate:completed` message with the task ID, outcome, and available output:
+When the child reaches a terminal outcome, the extension retains its status, available output and usage for on-demand retrieval. It does not send a `pi-delegate:completed` message, queue a completion follow-up, or wake an idle parent. Successful, failed, cancelled and incomplete outcomes follow the same query-only policy.
 
-- While the parent is busy, completion remains queued in the extension until current and already queued work has finished.
-- When the parent is idle, delivery triggers a turn to process the result.
-- Failed, cancelled, and incomplete outcomes are delivered as well as completed ones.
-
-This is not merely a UI notification. Delivery is not a durable acknowledgement that the model consumed the result, and exactly-once model processing is not guaranteed.
+Use `delegate_list` to discover tasks and `delegate_status` to retrieve results. An idle parent will not resume solely because a task finishes; an explicit query is required. Repeated queries remain possible—this is not an exactly-once retrieval or model-consumption guarantee.
 
 ## Discovering tasks and unified details
 
@@ -147,7 +143,7 @@ Pass an exact discovered ID to `delegate_status`:
 { "taskId": "<exact taskId>" }
 ```
 
-Both modes return metadata in the model-visible text and `details.task`: summary identity/progress; selected and confirmed effective startup cwd; requested and confirmed effective model/thinking; current tools (including concurrent/nested tools); resolved pressure policy and highest RPC-accepted stage; available usage; completion-delivery observation; and control availability/reasons. Missing effective fields are unconfirmed, not success. Cwd is startup configuration, not a continuously observed directory or sandbox. Elapsed time excludes queue/initialization, and tool calls do not add turns.
+Both modes return metadata in the model-visible text and `details.task`: summary identity/progress; selected and confirmed effective startup cwd; requested and confirmed effective model/thinking; current tools (including concurrent/nested tools); resolved pressure policy and highest RPC-accepted stage; available usage; and control availability/reasons. Missing effective fields are unconfirmed, not success. Cwd is startup configuration, not a continuously observed directory or sandbox. Elapsed time excludes queue/initialization, and tool calls do not add turns.
 
 | Field | Meaning |
 | --- | --- |
@@ -156,11 +152,10 @@ Both modes return metadata in the model-visible text and `details.task`: summary
 | `details.result` | Available final metadata: outcome, session/stop reason, errors, truncation and full-output path. |
 | `details.usage` | Available child token/cost usage; failure/cancellation values can be partial. |
 | `details.accounting` | Mode-specific accounting reminder. |
-| `details.deliveryError` | Background completion-delivery error, if observed. |
 
-Available output follows the existing [preview and full-file rules](#large-output). No final result is invented while a task is active. Failed/cancelled queries have `isError: true`; unknown or invalidated IDs fail explicitly. A completion-delivery failure does not change execution status or remove the retained result. `submitted` only means the host message call returned successfully, not that a model consumed it.
+Available output follows the existing [preview and full-file rules](#large-output). No final result is invented while a task is active. Failed/cancelled queries have `isError: true`; unknown or invalidated IDs fail explicitly. Background outcomes do not inject messages or trigger parent inference; retrieve retained results explicitly.
 
-All records/results remain discoverable through the originating session/branch scope, independent of five-second compact-row expiry or completion-message clearing. There is no TTL/count eviction or cross-session persistence. Exit, session replacement/forking, reload, and branch-changing navigation invalidate IDs; records are not moved to another session or branch. Paging limits responses, not retention.
+All records/results remain discoverable through the originating session/branch scope, independent of five-second compact-row expiry. There is no TTL/count eviction or cross-session persistence. Exit, session replacement/forking, reload, and branch-changing navigation invalidate IDs; records are not moved to another session or branch. Paging limits responses, not retention.
 
 Background usage is separate from Pi's parent-session totals. Synchronous usage is reported through the initiating result. Listing, querying, panel viewing and manual controls never return top-level task usage or charge it again.
 
@@ -194,7 +189,7 @@ Steering results are operation receipts, not task outcomes:
 | `failed` | This steering operation failed; it alone does not fail/cancel a healthy task. |
 | `uncertain` | The 40-second control-response timeout expired. Host preprocessing may still finish; **do not automatically retry**. |
 
-Every receipt includes `details.taskId`; unsuccessful receipts include `details.error` and `isError: true`. No top-level task usage is attached. Neither `queued` nor `handled` confirms durable queue residence, provider/model consumption, execution, compliance, or a final result. Query and completion messaging remain the ordinary result channels.
+Every receipt includes `details.taskId`; unsuccessful receipts include `details.error` and `isError: true`. No top-level task usage is attached. Neither `queued` nor `handled` confirms durable queue residence, provider/model consumption, execution, compliance, or a final result. Queries are the background result channel; synchronous delegation returns directly.
 
 Manual instructions and automatic pressure share one task-local submission boundary that waits for the preceding RPC outcome. This is not a priority policy or a model-consumption guarantee. After an uncertain timeout, the earlier host preprocessing may still run. Slash-leading caller text is prefixed as instruction text, while trusted host input handling and host steering mode remain intact.
 

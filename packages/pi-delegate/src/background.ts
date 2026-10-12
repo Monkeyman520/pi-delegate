@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type {
 	DelegationOptions,
 	DelegationResult,
@@ -11,16 +10,12 @@ import type { SteeringControl, SteeringReceipt } from "./steering.ts";
 import type { TaskDetails, TaskRecord } from "./tasks.ts";
 export const BACKGROUND_USAGE_NOTICE =
 	"Background task usage is reported separately and is not automatically included in Pi parent-session totals.";
-export const BACKGROUND_MESSAGE = "pi-delegate:completed";
-
-type TaskContext = Pick<ExtensionContext, "isIdle" | "hasPendingMessages">;
 export interface BackgroundTaskDetails {
 	taskId: string;
 	status: "queued" | "initializing" | "running" | DelegationStatus;
 	result?: DelegationResult["details"];
 	usage?: DelegationResult["usage"];
 	accounting: string;
-	deliveryError?: string;
 	task?: TaskDetails;
 }
 export interface BackgroundTaskResult {
@@ -44,42 +39,32 @@ interface Task {
 	id: string;
 	controller: AbortController;
 	record?: TaskRecord;
-	context: TaskContext;
 	operation: Promise<void>;
 	phase: "queued" | "initializing" | "running";
 	usage?: Usage;
 	steering?: SteeringControl;
 	result?: DelegationResult;
-	pendingDelivery: boolean;
-	deliveryError?: string;
 }
 
-/** Owns work and queued completion independently of the initiating agent turn. */
+/** Owns work and queryable results independently of the initiating agent turn. */
 export class BackgroundTasks {
 	private tasks = new Map<string, Task>();
 	private cleanups = new Set<Promise<void>>();
 	private closed = false;
-	private timer?: ReturnType<typeof setTimeout>;
 
 	constructor(
 		private run: (options: DelegationOptions) => Promise<DelegationResult>,
 		private failure: (error: unknown, cancelled: boolean) => DelegationResult,
-		private deliver: (result: BackgroundTaskResult) => void,
 	) {}
 
-	start(
-		options: DelegationOptions,
-		context: TaskContext,
-	): BackgroundTaskResult {
+	start(options: DelegationOptions): BackgroundTaskResult {
 		if (this.closed) throw new Error("Background task owner is closing");
 		options.signal?.throwIfAborted();
 		const task: Task = {
 			id: options.taskRecord?.taskId ?? randomUUID(),
 			record: options.taskRecord,
 			controller: new AbortController(),
-			context,
 			operation: Promise.resolve(),
-			pendingDelivery: false,
 			phase: "queued",
 		};
 		this.tasks.set(task.id, task);
@@ -108,8 +93,6 @@ export class BackgroundTasks {
 			.then((result) => {
 				task.steering = undefined;
 				task.result = result;
-				task.pendingDelivery = true;
-				if (this.tasks.get(task.id) === task) this.scheduleDelivery();
 			});
 		return this.view(task);
 	}
@@ -220,46 +203,16 @@ export class BackgroundTasks {
 					: {}),
 				accounting: BACKGROUND_USAGE_NOTICE,
 				...(metadata ? { task: metadata } : {}),
-				...(task.deliveryError ? { deliveryError: task.deliveryError } : {}),
 			},
 			isError: result?.isError ?? false,
 		};
 	}
 
-	/** Queue in our ownership scope, not an unremovable host follow-up queue. */
-	scheduleDelivery(delay = 0): void {
-		if (this.closed || this.timer !== undefined) return;
-		this.timer = setTimeout(() => {
-			this.timer = undefined;
-			for (const task of this.tasks.values()) {
-				if (
-					!task.pendingDelivery ||
-					!task.context.isIdle() ||
-					task.context.hasPendingMessages()
-				)
-					continue;
-				task.pendingDelivery = false;
-				try {
-					this.deliver(this.view(task));
-				} catch (error) {
-					task.deliveryError =
-						error instanceof Error ? error.message : String(error);
-				}
-				task.record?.delivered(task.deliveryError);
-			}
-			// Queue clearing and async compaction handlers need not emit another settled event.
-			if ([...this.tasks.values()].some((task) => task.pendingDelivery))
-				this.scheduleDelivery(25);
-		}, delay);
-	}
-
-	/** Invalidate delivery synchronously, then await execution-resource cleanup. */
+	/** Invalidate task access synchronously, then await execution-resource cleanup. */
 	async invalidate(closing = false): Promise<void> {
 		this.closed ||= closing;
 		const tasks = this.tasks;
 		this.tasks = new Map();
-		clearTimeout(this.timer);
-		this.timer = undefined;
 		// Retain detached work so overlapping invalidations cannot lose its cleanup.
 		// Register before abort, whose listeners can synchronously reenter this owner.
 		const cleanup = Promise.allSettled(

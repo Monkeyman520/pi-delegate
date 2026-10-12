@@ -76,9 +76,9 @@ function registration(run: typeof runDelegation) {
 	};
 }
 
-async function until(predicate: () => boolean) {
+async function until(predicate: () => boolean | Promise<boolean>) {
 	const deadline = Date.now() + 5000;
-	while (!predicate()) {
+	while (!(await predicate())) {
 		if (Date.now() > deadline) throw new Error("Handoff fixture timed out");
 		await Bun.sleep(5);
 	}
@@ -257,7 +257,21 @@ for (const resultFormat of [undefined, "handoff"] satisfies (
 						undefined,
 						r.ctx,
 					);
-					if (background) await until(() => r.messages.length === 1);
+					if (background)
+						await until(async () => {
+							const query = await r.tools
+								.get("delegate_status")
+								?.execute(
+									"query",
+									{ taskId: (result.details as { taskId: string }).taskId },
+									undefined,
+									undefined,
+									r.ctx,
+								);
+							return (
+								!!query && !!(query.details as { result?: unknown }).result
+							);
+						});
 					const submission = commands().filter((command) =>
 						command.message?.startsWith("Task:"),
 					);
@@ -277,8 +291,8 @@ for (const resultFormat of [undefined, "handoff"] satisfies (
 					});
 					expect(query).not.toHaveProperty("usage");
 					if (background) {
-						expect(r.messages[0]?.content[0]?.text).toContain(report);
-						r.messages.length = 0; // Clearing presentation must not remove the retained result.
+						expect(r.messages).toHaveLength(0);
+						// Repeated explicit queries preserve the retained result.
 						const recovered = await r.tools
 							.get("delegate_status")
 							?.execute("again", { taskId: id }, undefined, undefined, r.ctx);
@@ -349,16 +363,22 @@ test("queued background keeps the captured selection through admission and child
 			expect(queuedStarted).toBe(false);
 			expect(commands()).toEqual([]);
 			release();
-			await until(() => r.messages.length === 2);
+			const id = (ack.details as { taskId: string }).taskId;
+			let finalText = "";
+			await until(async () => {
+				const query = await r.tools
+					.get("delegate_status")
+					?.execute("query", { taskId: id }, undefined, undefined, r.ctx);
+				finalText =
+					query?.content[0]?.type === "text" ? query.content[0].text : "";
+				return !!query && !!(query.details as { result?: unknown }).result;
+			});
 			assertConvention(
 				commands().find((command) => command.message?.startsWith("Task:"))
 					?.message ?? "",
 			);
-			expect(
-				r.messages.filter((message) =>
-					message.content[0]?.text.includes(report),
-				),
-			).toHaveLength(1);
+			expect(finalText).toContain(report);
+			expect(r.messages).toHaveLength(0);
 		} finally {
 			release();
 			await r.close();

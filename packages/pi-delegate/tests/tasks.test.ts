@@ -156,7 +156,7 @@ test("paging reaches all records, orders active first, preserves results and imm
 	expect(records.list().tasks[0].title).not.toBe("changed");
 });
 
-test("visual expiry is not record expiry; invalidation blocks late progress/result/delivery", () => {
+test("visual expiry is not record expiry; invalidation blocks late progress/results", () => {
 	let seconds = 0;
 	const clock = { now: () => seconds, schedule: () => () => {} };
 	const records = new TaskRecords(clock);
@@ -172,17 +172,14 @@ test("visual expiry is not record expiry; invalidation blocks late progress/resu
 	expect(records.get(record.taskId)?.result?.content[0].text).toBe(
 		"available result",
 	);
-	record.delivered("completion delivery failed");
 	expect(record.details()).toMatchObject({
 		status: "completed",
-		delivery: { status: "failed" },
 	});
 	const old = records.accept(taskInput);
 	records.invalidate();
 	status.clear();
 	old.progress.observe({ type: "agent_start" });
 	old.complete(taskResult());
-	old.delivered();
 	expect(records.list().total).toBe(0);
 	expect(records.accept(taskInput).progress.id).toBe(3);
 	records.invalidate(true);
@@ -271,7 +268,7 @@ test("public tools discover pending synchronous tasks but reject independent con
 		});
 		const query = await host.invoke("delegate_status", { taskId: item.taskId });
 		expect(query.details).toMatchObject({
-			task: { mode: "synchronous", delivery: { status: "not_applicable" } },
+			task: { mode: "synchronous" },
 		});
 		expect(
 			query.content
@@ -311,7 +308,7 @@ test("public tools discover pending synchronous tasks but reject independent con
 	}
 });
 
-test("background delivery failure remains completed/discoverable and does not duplicate query usage", async () => {
+test("background completion remains silent/discoverable and does not duplicate query usage", async () => {
 	const host = registration(async (options) => {
 		options.onCwd?.(options.cwd);
 		return taskResult();
@@ -326,19 +323,18 @@ test("background delivery failure remains completed/discoverable and does not du
 			async () =>
 				(
 					(await host.invoke("delegate_status", { taskId: id })).details as {
-						deliveryError?: string;
+						status: string;
 					}
-				).deliveryError === "delivery failed",
+				).status === "completed",
 		);
+		expect(host.messages).toHaveLength(0);
 		for (let i = 0; i < 3; i++) {
 			const query = await host.invoke("delegate_status", { taskId: id });
 			expect(query).not.toHaveProperty("usage");
 			expect(query.details).toMatchObject({
 				status: "completed",
-				deliveryError: "delivery failed",
 				task: {
 					cwd: { effective: process.cwd() },
-					delivery: { status: "failed" },
 				},
 			});
 		}
@@ -454,16 +450,15 @@ test("compact view setup failure cannot stop accepted execution or consume admis
 	}
 });
 
-test("an empty delivery error is failed delivery, not a successful submission", () => {
+test("task details no longer expose automatic completion delivery state", () => {
 	const records = new TaskRecords();
 	const record = records.accept(taskInput);
 	record.complete(taskResult());
-	record.delivered("");
 	expect(record.details()).toMatchObject({
 		status: "completed",
 		resultAvailable: true,
-		delivery: { status: "failed", error: "" },
 	});
+	expect(record.details()).not.toHaveProperty("delivery");
 });
 
 test("terminal publication is atomic and background queries share it before the owner promise settles", async () => {
@@ -488,20 +483,16 @@ test("terminal publication is atomic and background queries share it before the 
 			return identified;
 		},
 		(_error, cancelled) => taskResult(cancelled ? "cancelled" : "failed"),
-		() => {},
 	);
 	try {
-		tasks.start(
-			{
-				cwd: taskInput.cwd,
-				args: [],
-				snapshot: { version: 1, tools: [], active: [] },
-				task: taskInput.task,
-				taskRecord: record,
-				status: record.progress,
-			},
-			{ isIdle: () => false, hasPendingMessages: () => false },
-		);
+		tasks.start({
+			cwd: taskInput.cwd,
+			args: [],
+			snapshot: { version: 1, tools: [], active: [] },
+			task: taskInput.task,
+			taskRecord: record,
+			status: record.progress,
+		});
 		expect(early?.details).toMatchObject({
 			status: "completed",
 			result: { status: "completed" },
@@ -516,7 +507,6 @@ test("terminal publication is atomic and background queries share it before the 
 				controls: { cancel: false, steer: false },
 				usage: { totalTokens: 4 },
 				configuration: { effective: { thinkingLevel: "off" } },
-				delivery: { status: "pending" },
 			});
 		if (early?.details.result) early.details.result.status = "failed";
 		expect(tasks.query(record.taskId).details.status).toBe("completed");

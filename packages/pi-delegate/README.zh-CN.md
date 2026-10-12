@@ -84,6 +84,8 @@ pi install /absolute/path/to/checkout/packages/pi-delegate
 }
 ```
 
+后台任务结束时不会自动发送完成消息，也不会唤醒主 agent。请通过 `delegate_list` 发现任务，再用 `delegate_status` 按需获取结果。
+
 | 工具 | 用途 |
 | --- | --- |
 | `delegate` | 启动全新的同步或后台子 agent。 |

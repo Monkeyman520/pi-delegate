@@ -8,10 +8,7 @@ import {
 	getPackageDir,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import {
-	BACKGROUND_MESSAGE,
-	type BackgroundTaskDetails,
-} from "../src/background.ts";
+import type { BackgroundTaskDetails } from "../src/background.ts";
 import { resolveCli } from "../src/delegate.ts";
 import { RpcProcess } from "../src/rpc.ts";
 
@@ -58,7 +55,7 @@ function details(result: ToolResult): BackgroundTaskDetails {
 }
 function completions(messages: Message[]) {
 	return messages.filter(
-		(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
+		(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
 	);
 }
 
@@ -71,7 +68,7 @@ async function withParent(
 		start(task?: string): Promise<string>;
 		child(): Promise<ChildLog>;
 		release(name: "child" | "parent"): Promise<void>;
-		consumed(id: string): Promise<Message[]>;
+		queriedResults(id: string): Promise<Message[]>;
 		modals: string[];
 	}) => Promise<void>,
 ) {
@@ -192,24 +189,23 @@ async function withParent(
 				return child;
 			},
 			release: (name) => writeFile(join(logs, `${name}-release`), "release"),
-			async consumed(id) {
-				const seen = await eventually(
-					messages,
-					(ms) =>
-						ms.some(
-							(m) =>
-								m.role === "assistant" &&
-								textOf(m).startsWith("MODEL_SAW:") &&
-								textOf(m).includes(id),
-						),
-					"model consumes automatic completion",
-				);
+			async queriedResults(id) {
 				await eventually(
 					() => parent.request<{ isStreaming: boolean }>("get_state"),
-					(s) => !s.isStreaming,
-					"completion turn settles",
+					(state) => !state.isStreaming,
+					"parent settled before explicit query",
 				);
-				return seen;
+				await eventually(
+					async () => {
+						await prompt(`STATUS ${id}`);
+						return messages();
+					},
+					(ms) => details(tool(ms, "delegate_status")).result !== undefined,
+					"on-demand terminal result",
+				);
+				const all = await messages();
+				expect(completions(all)).toHaveLength(0);
+				return all;
 			},
 		});
 	} finally {
@@ -223,7 +219,7 @@ function cleaned(logs: string, child: ChildLog) {
 	expect(() => process.kill(child.pid, 0)).toThrow();
 }
 
-test("real Pi RPC: acknowledges gated background work, proceeds independently, and idle completion wakes the model with separate usage", async () => {
+test("real Pi RPC: acknowledges gated background work, proceeds independently, and idle completion remains silent with separate usage", async () => {
 	await withParent(async (host) => {
 		const id = await host.start();
 		const child = await host.child();
@@ -240,14 +236,23 @@ test("real Pi RPC: acknowledges gated background work, proceeds independently, a
 		expect(completions(await host.messages())).toHaveLength(0);
 		expect(existsSync(join(host.logs, `${child.pid}.closed`))).toBe(false);
 		await host.release("child");
-		const delivered = await host.consumed(id); // No new prompt after release.
-		expect(completions(delivered)).toHaveLength(1);
-		const seen = [...delivered]
-			.reverse()
-			.find(
-				(m) => m.role === "assistant" && textOf(m).startsWith("MODEL_SAW:"),
-			);
-		if (!seen) throw new Error("Missing model-visible completion");
+		const before = (await host.messages()).length;
+		await eventually(
+			() =>
+				existsSync(join(host.logs, `${child.pid}.closed`)) &&
+				!existsSync(dirname(child.snapshot)),
+			Boolean,
+			"child cleanup",
+		);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect((await host.messages()).length).toBe(before);
+		expect(
+			(await host.parent.request<{ isStreaming: boolean }>("get_state"))
+				.isStreaming,
+		).toBe(false);
+		const queried = await host.queriedResults(id);
+		expect(completions(queried)).toHaveLength(0);
+		const seen = tool(queried, "delegate_status");
 		expect(textOf(seen)).toContain(`${id}: completed`);
 		expect(textOf(seen)).toContain("CHILD_RESULT:Task:\ngated proof");
 		expect(textOf(seen)).toContain("explicit-only");
@@ -281,7 +286,7 @@ test("real Pi RPC: acknowledges gated background work, proceeds independently, a
 	});
 }, 30_000);
 
-test("real Pi RPC: busy-parent completion stays out of host queue and reaches the model only after parent work", async () => {
+test("real Pi RPC: busy-parent completion stays out of host queue and is retrieved on demand", async () => {
 	await withParent(async (host) => {
 		const id = await host.start();
 		const child = await host.child();
@@ -311,13 +316,10 @@ test("real Pi RPC: busy-parent completion stays out of host queue and reaches th
 				.isStreaming,
 		).toBe(true);
 		await host.release("parent");
-		const all = await host.consumed(id);
+		const all = await host.queriedResults(id);
 		const finished = all.findIndex((m) => textOf(m) === "PARENT_BUSY_FINISHED");
-		const completion = all.findIndex(
-			(m) => m.role === "custom" && m.customType === BACKGROUND_MESSAGE,
-		);
 		expect(finished).toBeGreaterThan(-1);
-		expect(completion).toBeGreaterThan(finished);
+		expect(completions(all)).toHaveLength(0);
 		await host.prompt(`STATUS ${id}`);
 		expect(details(tool(await host.messages(), "delegate_status")).status).toBe(
 			"completed",
@@ -349,7 +351,7 @@ test("real Pi RPC: ordinary parent abort leaves child alive; explicit cancel rep
 		expect(cancelled.isError).toBe(true);
 		expect(cancelled.usage).toBeUndefined();
 		cleaned(host.logs, child);
-		const all = await host.consumed(id);
+		const all = await host.queriedResults(id);
 		expect(
 			all.some(
 				(m) => m.role === "assistant" && textOf(m).includes(`${id}: cancelled`),
@@ -363,7 +365,7 @@ test("real Pi RPC: background modal refusal permits successful child completion 
 		const id = await host.start("dialogs");
 		const child = await host.child();
 		await host.release("child");
-		const all = await host.consumed(id);
+		const all = await host.queriedResults(id);
 		expect(readFileSync(join(host.logs, `${child.pid}.dialogs`), "utf8")).toBe(
 			"[null,false,null,null]",
 		);
@@ -410,7 +412,7 @@ test("real Pi RPC: actual tree navigation invalidates pending work and does not 
 	});
 }, 30_000);
 
-test("real Pi RPC: abort with unrelated follow-up queued then clear_queue automatically wakes locally pending completion", async () => {
+test("real Pi RPC: abort and clear_queue do not wake the parent; completed results remain queryable", async () => {
 	await withParent(async (host) => {
 		const id = await host.start();
 		const child = await host.child();
@@ -441,8 +443,11 @@ test("real Pi RPC: abort with unrelated follow-up queued then clear_queue automa
 			"clear_queue",
 		);
 		expect(cleared.followUp).toEqual(["unrelated queued host work"]);
-		const all = await host.consumed(id); // No prompt or gate release: queue clearing emits no settled event.
-		expect(completions(all)).toHaveLength(1);
+		const before = (await host.messages()).length;
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		expect((await host.messages()).length).toBe(before);
+		const all = await host.queriedResults(id);
+		expect(completions(all)).toHaveLength(0);
 		expect(all.some((m) => textOf(m) === "PARENT_BUSY_FINISHED")).toBe(false);
 		expect(
 			all.some((m) => textOf(m) === "PARENT_REPLY:unrelated queued host work"),

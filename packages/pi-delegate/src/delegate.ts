@@ -19,11 +19,7 @@ import {
 	type RpcExtensionUIResponse,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import {
-	BACKGROUND_MESSAGE,
-	BACKGROUND_USAGE_NOTICE,
-	BackgroundTasks,
-} from "./background.ts";
+import { BACKGROUND_USAGE_NOTICE, BackgroundTasks } from "./background.ts";
 import {
 	type ConfigurationDetails,
 	captureConfiguration,
@@ -550,21 +546,7 @@ export function registerDelegate(
 			release?.();
 		}
 	};
-	const background = new BackgroundTasks(
-		observedRun,
-		failedResult,
-		(result) => {
-			pi.sendMessage(
-				{
-					customType: BACKGROUND_MESSAGE,
-					content: result.content,
-					display: true,
-					details: result.details,
-				},
-				{ triggerTurn: true, deliverAs: "followUp" },
-			);
-		},
-	);
+	const background = new BackgroundTasks(observedRun, failedResult);
 	const entryPath = fileURLToPath(
 		new URL(
 			import.meta.url.endsWith(".ts") ? "./index.ts" : "./index.js",
@@ -610,7 +592,7 @@ export function registerDelegate(
 			name: DELEGATE_TOOL,
 			label: "Delegate",
 			description:
-				"Run a self-contained task in a fresh subagent with inherited tools except delegation. The parent conversation is not copied; supply necessary context. By default the subagent shares the parent working directory; optional cwd selects another existing directory, not a sandbox. Coordinate file edits. By default, wait for the result. With background:true, return a taskId and deliver completion automatically; use delegate_list to discover tasks and delegate_status for details. delegate_steer/delegate_cancel manage background tasks only. Large results include a full-output file path.",
+				"Run a self-contained task in a fresh subagent with inherited tools except delegation. The parent conversation is not copied; supply necessary context. By default the subagent shares the parent working directory; optional cwd selects another existing directory, not a sandbox. Coordinate file edits. By default, wait for the result. With background:true, return a taskId without waiting; completion does not send an automatic message or wake the parent; use delegate_list to discover tasks and delegate_status for details. delegate_steer/delegate_cancel manage background tasks only. Large results include a full-output file path.",
 			parameters,
 			prepareArguments(args) {
 				if (args === null || typeof args !== "object" || Array.isArray(args))
@@ -733,7 +715,7 @@ export function registerDelegate(
 						onCwd: record.spawned,
 						onSteeringControl: record.controlled,
 					};
-					if (params.background) return background.start(options, ctx);
+					if (params.background) return background.start(options);
 					const operation = observedRun({
 						...options,
 						ui: (request) =>
@@ -791,7 +773,6 @@ export function registerDelegate(
 				...(result ? { result: structuredClone(result.details) } : {}),
 				usage: structuredClone(record.progress.usageValue),
 				accounting,
-				...(task.delivery.error ? { deliveryError: task.delivery.error } : {}),
 			},
 			isError: result?.isError ?? false,
 		};
@@ -854,7 +835,7 @@ export function registerDelegate(
 				label: cancel ? "Cancel delegated task" : "Delegated task status",
 				description: cancel
 					? "Cancel a background task and wait for cleanup. Already-finished tasks return their existing result. Does not cancel the parent turn or undo changes already made."
-					: "Get a synchronous or background task's current status, metadata, available result, and usage without waiting for completion. Background completion is delivered automatically; repeated polling is unnecessary. Results remain queryable if the completion message was cleared.",
+					: "Get a synchronous or background task's current status, metadata, available result, and usage without waiting for completion. Background tasks do not send automatic completion messages or wake the parent; query results on demand. Results remain available until the current session/branch scope is invalidated.",
 				parameters: Type.Object({
 					taskId: Type.String({
 						minLength: 1,
@@ -927,9 +908,6 @@ export function registerDelegate(
 		records.invalidate(true);
 		updateStatus(() => status.bind(ctx));
 	});
-	pi.on("agent_settled", () => background.scheduleDelivery());
-	pi.on("session_compact", () => background.scheduleDelivery());
-	pi.on("session_compact_failed", () => background.scheduleDelivery());
 	pi.on("session_before_tree", async (event) => {
 		if (event.preparation.targetId !== event.preparation.oldLeafId) {
 			updateStatus(() => status.clear());

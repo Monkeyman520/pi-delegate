@@ -80,7 +80,7 @@ The test suite includes:
 
 - Parent/child tool-registration and inheritance checks.
 - RPC execution, result states, output truncation, and cleanup.
-- Background completion delivery, cancellation, session replacement/reload, and branch-navigation boundaries.
+- Background query-only completion (no automatic messages/wake-up), cancellation, session replacement/reload, and branch-navigation boundaries.
 - Pressure timing/turn semantics and TUI status behavior.
 - Background runtime steering readiness/closure, manual-pressure serialization, trusted handlers, slash safety, both host modes, real control timeout, provider-input boundaries, and child discovery/nested/codemode exclusion.
 - Headless synchronous/background discovery, exact-ID/label correlation, bounded paging/filtering, retained results after visual expiry, delivery/execution separation and stale scope callbacks.

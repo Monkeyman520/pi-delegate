@@ -78,7 +78,7 @@ async function withParent(
 		"--extension",
 		"builtin:tool-search",
 		"--tools",
-		"read,delegate,fixture_echo,codemode,tool_search",
+		"read,delegate,delegate_status,fixture_echo,codemode,tool_search",
 		"--provider",
 		"delegate-fixture",
 		"--model",
@@ -103,7 +103,7 @@ async function withParent(
 			"--extension",
 			"builtin:mcp",
 			"--tools",
-			"read,delegate,fixture_echo,codemode,tool_search,mcp__fixture__echo",
+			"read,delegate,delegate_status,fixture_echo,codemode,tool_search,mcp__fixture__echo",
 		);
 	}
 	if (configured) {
@@ -213,8 +213,11 @@ test("real Pi RPC: concurrent fresh children reload flags, restore tools, and om
 			expect(result.tools).toContain("fixture_echo");
 			expect(result.active).not.toContain("fixture_echo");
 			expect(result.tools).not.toContain("delegate");
+			expect(result.tools).not.toContain("delegate_status");
 			expect([...result.active].sort()).toEqual(
-				state.active.filter((name) => name !== "delegate").sort(),
+				state.active
+					.filter((name) => name !== "delegate" && name !== "delegate_status")
+					.sort(),
 			);
 		}
 		verifyCleanup(logs);
@@ -471,6 +474,44 @@ async function until(predicate: () => boolean | Promise<boolean>) {
 		await Bun.sleep(10);
 	}
 }
+async function queryBackground(parent: RpcProcess) {
+	const { messages } = await parent.request<{
+		messages: AgentSession["messages"];
+	}>("get_messages");
+	const ack = [...messages]
+		.reverse()
+		.find((m) => m.role === "toolResult" && m.toolName === "delegate");
+	if (ack?.role !== "toolResult")
+		throw new Error("Missing background acknowledgement");
+	const taskId = (ack.details as { taskId: string }).taskId;
+	let result:
+		| Extract<AgentSession["messages"][number], { role: "toolResult" }>
+		| undefined;
+	await until(async () => {
+		const settled = parent.waitForSettled();
+		try {
+			await parent.request("prompt", { message: `STATUS ${taskId}` });
+			await settled.promise;
+		} finally {
+			settled.dispose();
+		}
+		const { messages } = await parent.request<{
+			messages: AgentSession["messages"];
+		}>("get_messages");
+		expect(
+			messages.some(
+				(m) => m.role === "custom" && m.customType === "pi-delegate:completed",
+			),
+		).toBe(false);
+		const message = [...messages]
+			.reverse()
+			.find((m) => m.role === "toolResult" && m.toolName === "delegate_status");
+		if (message?.role !== "toolResult") return false;
+		result = message;
+		return !!(message.details as { result?: unknown }).result;
+	});
+	return required(result);
+}
 
 for (const background of [false, true]) {
 	for (const overrides of [
@@ -506,17 +547,20 @@ for (const background of [false, true]) {
 				} finally {
 					settled.dispose();
 				}
+				const backgroundQuery = background
+					? await queryBackground(parent)
+					: undefined;
 				let result: import("../src/delegate.ts").DelegationDetails | undefined;
 				let output = "";
 				await until(async () => {
 					const { messages } = await parent.request<{
 						messages: AgentSession["messages"];
 					}>("get_messages");
-					const message = messages.find((m) =>
-						background
-							? m.role === "custom" && m.customType === "pi-delegate:completed"
-							: m.role === "toolResult" && m.toolName === "delegate",
-					);
+					const message =
+						backgroundQuery ??
+						messages.find(
+							(m) => m.role === "toolResult" && m.toolName === "delegate",
+						);
 					if (
 						!message ||
 						(message.role !== "custom" && message.role !== "toolResult")
@@ -821,7 +865,7 @@ for (const trust of ["native", "approve", "no-approve"] as const) {
 }
 
 for (const background of [false, true]) {
-	test(`real parent public delegate cwd: ${background ? "background completion" : "sync result"} reads selected workspace`, async () => {
+	test(`real parent public delegate cwd: ${background ? "background query" : "sync result"} reads selected workspace`, async () => {
 		await withParent(async (parent, state, _args, _env, logs) => {
 			const target = join(state.cwd, "public target");
 			await mkdir(target);
@@ -844,12 +888,11 @@ for (const background of [false, true]) {
 					messages: AgentSession["messages"];
 				}>("get_messages");
 				if (background) {
-					const completion = messages.find(
-						(item) =>
-							item.role === "custom" &&
-							item.customType === "pi-delegate:completed",
+					const query = await queryBackground(parent);
+					outcome = query.details;
+					expect(JSON.stringify(query.content)).toContain(
+						"public-target-proof",
 					);
-					if (completion?.role === "custom") outcome = completion.details;
 				} else {
 					const result = messages.find(
 						(item) =>

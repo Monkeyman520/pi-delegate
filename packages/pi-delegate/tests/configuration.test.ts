@@ -151,7 +151,7 @@ for (const background of [false, true]) {
 					expect(result.details).toMatchObject({
 						result: { configuration: { requested: expected } },
 					});
-					expect(r.delivered).toHaveLength(1);
+					expect(r.delivered).toHaveLength(0);
 				}
 			} finally {
 				await r.close();
