@@ -28,6 +28,12 @@ function duration(ms: number | undefined): string {
 function textOutput(result: Result): string {
 	return result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
 }
+function truncateSummary(text: string, width: number): string {
+	// truncateToWidth resets all SGR styles around its ellipsis. Our summaries inherit
+	// their background from the host's Box, so reset text styles without clearing it.
+	// Only apply this to our own lines; composed third-party components stay untouched.
+	return truncateToWidth(text, width).replace(/\x1b\[0m/g, "\x1b[22;23;24;25;27;28;29;39m");
+}
 
 /** Strictly validate the available host metadata; never infer child status from output. */
 export function codemodeCalls(details: unknown): Child[] | undefined {
@@ -268,9 +274,9 @@ export class ToolPresentation {
 							const time = duration(this.elapsed(context, state));
 							const title = `${this.statusText(this.status(context), theme)} ${theme.fg("toolTitle", clean(name))}${value ? ` ${theme.bold(theme.fg("accent", clean(value)))}` : ""}`;
 							const suffix = time && width >= 16 ? ` ${theme.fg("dim", time)}` : "";
-							const line = truncateToWidth(`${title}${summary ? ` · ${theme.fg(context.isError ? "error" : "muted", summary)}` : ""}`, Math.max(1, width - visibleWidth(suffix))) + suffix;
+							const line = truncateSummary(`${title}${summary ? ` · ${theme.fg(context.isError ? "error" : "muted", summary)}` : ""}`, Math.max(1, width - visibleWidth(suffix))) + suffix;
 							return [line, ...(special && name === "codemode" && !state.result
-								? [truncateToWidth(theme.fg("dim", host.keyHint("app.tools.expand", "to expand script")), width)] : [])];
+								? [truncateSummary(theme.fg("dim", host.keyHint("app.tools.expand", "to expand script")), width)] : [])];
 						},
 					};
 					// Do not flatten custom components: they may own buttons, focus or mouse regions.
@@ -335,7 +341,7 @@ export class ToolPresentation {
 							}
 							lines.push(...this.notices(result, theme, width));
 							lines.push(theme.fg("dim", `${host.keyHint("app.tools.expand", "to expand")} · ${calls ? "script, output & host child summaries (no raw child results)" : "arguments & result"}`));
-							return lines.map((line) => truncateToWidth(line, width));
+							return lines.map((line) => truncateSummary(line, width));
 						},
 					};
 					return [preview, ...body];

@@ -18,6 +18,7 @@ import { createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent
 // Actual upgraded host registration, resolver chain and ToolExecutionComponent, with controlled
 // results and an in-memory terminal. No provider, real terminal/font or IME visual claims.
 const { ToolExecutionComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/tool-execution.js")).href);
+const hostTheme = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/theme/theme.js")).href);
 initTheme("dark");
 
 async function fixture(t: test.TestContext, mode: "regular" | "fullscreen" = "regular") {
@@ -76,6 +77,108 @@ function frame(component: InstanceType<typeof ToolExecutionComponent>, width = 1
 	const lines = component.render(width);
 	assert.ok(lines.every((line: string) => visibleWidth(line) <= width), `overflow at ${width}`);
 	return stripTerminalSequences(lines.join("\n"));
+}
+
+// Interpret SGR state instead of stripping it: text/width snapshots cannot detect background holes.
+function styledRuns(line: string): Array<{ text: string; bg: string; fg: string; bold: boolean; dim: boolean }> {
+	const runs: Array<{ text: string; bg: string; fg: string; bold: boolean; dim: boolean }> = [];
+	let bg = "default", fg = "default", bold = false, dim = false;
+	for (const match of line.matchAll(/\x1b\[([\d;]*)m|([^\x1b]+)/g)) {
+		if (match[2] !== undefined) {
+			runs.push({ text: match[2], bg, fg, bold, dim });
+			continue;
+		}
+		const codes = match[1]!.split(";").map(Number);
+		for (let i = 0; i < codes.length; i++) {
+			const code = codes[i]!;
+			if (code === 38 || code === 48) {
+				const count = codes[i + 1] === 2 ? 4 : 2;
+				if (code === 48) bg = codes.slice(i, i + count + 1).join(";");
+				else fg = codes.slice(i, i + count + 1).join(";");
+				i += count; // RGB/palette values are not independent SGR attributes.
+			} else if (code === 0) { bg = "default"; fg = "default"; bold = false; dim = false; }
+			else if (code === 49) bg = "default";
+			else if (code === 39) fg = "default";
+			else if ((code >= 40 && code <= 47) || (code >= 100 && code <= 107)) bg = String(code);
+			else if (code === 1) bold = true;
+			else if (code === 2) dim = true;
+			else if (code === 22) { bold = false; dim = false; }
+		}
+	}
+	return runs;
+}
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: truncated summaries preserve the host background through ellipsis, duration and padding`, async (t) => {
+		const f = await fixture(t, mode);
+		t.after(() => initTheme("dark"));
+		for (const theme of ["dark", "light"] as const) {
+			initTheme(theme);
+			for (const status of ["pending", "running", "ok", "error"] as const) {
+				for (const generic of [false, true]) {
+					const name = generic ? "unfamiliar" : "read";
+					const id = `${theme}-${status}-${name}`;
+					const path = "中文/é👩‍💻/" + "long-path/".repeat(20);
+					const card = f.component(name, id, { path });
+					if (status === "running") {
+						f.presentation.start(id); f.advance(275); card.markExecutionStarted();
+					} else if (status === "ok" || status === "error") {
+						card.updateResult(result("long-result ".repeat(30), undefined, status === "error", status === "ok" ? 275 : 2500));
+					}
+					for (const width of [12, 22, 40, 60, 1000]) {
+						card.invalidate();
+						const lines: string[] = card.render(width);
+						assert.ok(lines.every((line) => visibleWidth(line) <= width));
+						const expectedBg = styledRuns(lines[1]!)[0]!.bg; // Host's top padding uses the current status/theme.
+						assert.notEqual(expectedBg, "default");
+						for (const line of lines.slice(1)) {
+							assert.ok(styledRuns(line).every((run) => run.bg === expectedBg),
+								`${theme}/${status}/${name}/${width}: background changed within ${JSON.stringify(stripTerminalSequences(line))}`);
+						}
+						const header = lines[2]!;
+						if (width === 1000) assert.doesNotMatch(stripTerminalSequences(header), /\.\.\./, "wide control avoids truncation");
+						if (width === 60) {
+							assert.match(stripTerminalSequences(header), /\.\.\./, "exercise actual truncation");
+							const ellipsis = styledRuns(header).find((run) => run.text.includes("..."))!;
+							assert.equal(ellipsis.bold, false, "truncated bold target does not bleed into ellipsis");
+							if (status !== "pending") {
+								const time = status === "error" ? "2.5s" : "275ms";
+								const suffix = styledRuns(header).find((run) => run.text.includes(time))!;
+								assert.ok(suffix, "measured duration survives truncation");
+								assert.equal(suffix.bold, false);
+								const expected = styledRuns(hostTheme.theme.fg("dim", time))[0]!;
+								assert.equal(suffix.fg, expected.fg, "duration keeps the theme's dim foreground");
+								assert.equal(suffix.dim, expected.dim);
+							}
+						}
+					}
+					f.presentation.end(id);
+				}
+			}
+		}
+	});
+	test(`${mode}: truncated codemode hints, child rows and output keep the parent background`, async (t) => {
+		const f = await fixture(t, mode);
+		t.after(() => initTheme("dark"));
+		for (const theme of ["dark", "light"] as const) {
+			initTheme(theme);
+			const card = f.component("codemode", "background", { code: "return 'parent';" });
+			for (const stage of ["pending", "running", "ok"] as const) {
+				if (stage !== "pending") card.updateResult(result("parent-output ".repeat(30), {
+					calls: [{ id: "background/0", name: "unfamiliar", args: "long-child-args ".repeat(30), status: stage, durationMs: 275 }],
+				}), stage === "running");
+				for (const width of [12, 22, 60, 400]) {
+					card.invalidate();
+					const lines: string[] = card.render(width);
+					const expectedBg = styledRuns(lines[1]!)[0]!.bg;
+					assert.notEqual(expectedBg, "default");
+					assert.ok(lines.every((line) => visibleWidth(line) <= width));
+					assert.ok(lines.slice(1).every((line) => styledRuns(line).every((run) => run.bg === expectedBg)),
+						`${theme}/${stage}/${width}: codemode background changed within a line`);
+				}
+			}
+		}
+	});
 }
 
 for (const mode of ["regular", "fullscreen"] as const) {
