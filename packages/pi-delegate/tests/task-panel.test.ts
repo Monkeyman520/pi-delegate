@@ -569,3 +569,28 @@ test.serial(
 		}
 	},
 );
+
+test.serial(
+	"Result view presents handoff text without a report-specific protocol or actions",
+	async () => {
+		const s = await setup();
+		try {
+			const report =
+				"Completion: reviewed; unfinished: none\nChanges: no file changes\nDeliverables: none available\nVerification: bun test not run (analysis only)\nBlockers and decisions: none";
+			const record = s.records.accept(taskInput);
+			record.complete({
+				...taskResult(),
+				content: [{ type: "text", text: report }],
+			});
+			s.frame();
+			s.panel.handleInput(enter);
+			s.panel.handleInput(tab);
+			const frame = s.frame();
+			for (const line of report.split("\n")) expect(frame).toContain(line);
+			expect(s.calls).toEqual([]);
+			expect(record.result?.content[0].text).toBe(report);
+		} finally {
+			s.dispose();
+		}
+	},
+);

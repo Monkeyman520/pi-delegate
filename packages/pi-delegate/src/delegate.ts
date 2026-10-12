@@ -51,6 +51,12 @@ import {
 	TaskPressure,
 	validatePressureInput,
 } from "./pressure.ts";
+import {
+	delegationPrompt,
+	type ResultFormat,
+	resultFormatParameter,
+	validateResultFormat,
+} from "./result-format.ts";
 import { type RpcDiagnostics, RpcProcess } from "./rpc.ts";
 import { Admission, concurrencyLimit } from "./scheduling.ts";
 import { AgentStatus, type StatusObserver } from "./status.ts";
@@ -77,6 +83,7 @@ export interface DelegationOptions {
 	requestedConfiguration?: TaskConfiguration;
 	task: string;
 	context?: string;
+	resultFormat?: ResultFormat;
 	pressure?: PressureOverrides;
 	status?: StatusObserver;
 	taskRecord?: TaskRecord;
@@ -187,6 +194,7 @@ export async function runDelegation(
 		let result: DelegationResult;
 		try {
 			options.signal?.throwIfAborted();
+			validateResultFormat(options.resultFormat);
 			validateCwd(options.cwd);
 			const policy = resolvePressure(options.pressure);
 			directory = await mkdtemp(join(tmpdir(), "pi-delegate-"));
@@ -323,8 +331,11 @@ export async function runDelegation(
 			});
 			options.signal?.addEventListener("abort", steering.close, { once: true });
 			if (options.signal?.aborted) steering.close();
-			// Prefixing prevents tasks beginning with '/' from becoming extension commands.
-			const message = `Task:\n${options.task}${options.context === undefined ? "" : `\n\nSupplementary context:\n${options.context}`}`;
+			const message = delegationPrompt(
+				options.task,
+				options.context,
+				options.resultFormat,
+			);
 			startupStage = "submit";
 			const accepted = await rpc.request<{ disposition: string }>("prompt", {
 				message,
@@ -589,6 +600,7 @@ export function registerDelegate(
 					"Return a taskId without waiting. Default false; requires a long-lived TUI/RPC session. Tasks do not survive exit, reload, session replacement, or branch navigation. Usage is separate from parent-session totals.",
 			}),
 		),
+		resultFormat: Type.Optional(resultFormatParameter),
 		model: Type.Optional(modelParameter),
 		thinkingLevel: Type.Optional(thinkingParameter),
 		pressure: Type.Optional(pressureParameters),
@@ -609,6 +621,14 @@ export function registerDelegate(
 				delete prepared.__piDelegatePressureError;
 				delete prepared.__piDelegateSelectionError;
 				delete prepared.__piDelegateCwdError;
+				delete prepared.__piDelegateResultFormatError;
+				try {
+					validateResultFormat(prepared.resultFormat);
+				} catch (error) {
+					delete prepared.resultFormat;
+					prepared.__piDelegateResultFormatError =
+						error instanceof Error ? error.message : String(error);
+				}
 				try {
 					validateCwdInput(prepared.cwd);
 				} catch (error) {
@@ -643,6 +663,14 @@ export function registerDelegate(
 				let record: TaskRecord | undefined;
 				try {
 					combined.throwIfAborted();
+					const resultFormatError = (
+						params as Static<typeof parameters> & {
+							__piDelegateResultFormatError?: string;
+						}
+					).__piDelegateResultFormatError;
+					if (resultFormatError !== undefined)
+						throw new Error(resultFormatError);
+					validateResultFormat(params.resultFormat);
 					const cwdError = (
 						params as Static<typeof parameters> & {
 							__piDelegateCwdError?: string;
@@ -697,6 +725,7 @@ export function registerDelegate(
 						cwd,
 						task: params.task,
 						context: params.context,
+						resultFormat: params.resultFormat,
 						pressure: policy,
 						signal: combined,
 						status: record.progress,

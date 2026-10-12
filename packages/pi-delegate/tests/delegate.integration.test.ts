@@ -953,3 +953,48 @@ for (const background of [false, true]) {
 		});
 	}, 30_000);
 }
+
+for (const resultFormat of [undefined, "handoff"] as const) {
+	test(`real Pi public opt-in reaches child provider, format=${resultFormat}`, async () => {
+		await withParent(async (parent, _state, _args, _env, logs) => {
+			const args = {
+				task: "Analyze only; do not modify files; return only JSON",
+				context: "original context",
+				...(resultFormat ? { resultFormat } : {}),
+			};
+			const settled = parent.waitForSettled();
+			try {
+				await parent.request("prompt", {
+					message: `CONFIG ${JSON.stringify(args)}`,
+				});
+				await settled.promise;
+			} finally {
+				settled.dispose();
+			}
+			const { messages } = await parent.request<{
+				messages: AgentSession["messages"];
+			}>("get_messages");
+			const result = messages.find(
+				(message) =>
+					message.role === "toolResult" && message.toolName === "delegate",
+			);
+			if (result?.role !== "toolResult" || result.content[0]?.type !== "text")
+				throw new Error("Missing delegate text");
+			expect(result.isError).toBe(false);
+			const child = JSON.parse(result.content[0].text);
+			const original = `Task:\n${args.task}\n\nSupplementary context:\n${args.context}`;
+			if (resultFormat) {
+				expect(child.prompt.startsWith(original)).toBe(true);
+				expect(child.prompt).toContain(
+					"Explicit task-specific output requirements take precedence",
+				);
+				expect(child.prompt).toContain("grants no extra permission");
+				expect(child.prompt).toContain("not an enforced schema");
+			} else expect(child.prompt).toBe(original);
+			expect(child.userCount).toBe(1);
+			expect(child.tools).not.toContain("delegate");
+			expect(result.details).toMatchObject({ status: "completed" });
+			verifyCleanup(logs);
+		});
+	}, 30_000);
+}

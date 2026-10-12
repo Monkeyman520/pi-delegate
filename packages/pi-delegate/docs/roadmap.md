@@ -19,9 +19,11 @@ Implemented in the current source: `delegate_list`, unified `delegate_status`, r
 
 ### 2. Reviewable, traceable result handoff
 
-- [ ] Offer an optional lightweight result template covering completed and unfinished work, changed files, commit/patch/artifact paths, performed checks and their results, omitted checks and their reasons, blockers, and decisions needed from the parent.
+Implemented in the current source as optional `delegate.resultFormat: "handoff"`. It is an advisory reporting request, not a schema or acceptance gate; explicit output requirements and task permissions prevail. Omission keeps existing behavior. See [usage and limitations](usage.md#optional-result-handoff).
+
+- [x] Offer an optional lightweight result template covering completed and unfinished work, changed files, commit/patch/artifact paths, performed checks and their results, omitted checks and their reasons, blockers, and decisions needed from the parent.
 - [ ] Consider optional result schemas after the template workflow is established. Structural validation is not evidence that reported changes or checks are correct.
-- [ ] Preserve the distinction between execution completion and task acceptance: `completed` means the child produced a final answer, not that requirements were satisfied or tests passed. The parent remains responsible for inspecting actual artifacts, integration, and necessary validation.
+- [x] Preserve the distinction between execution completion and task acceptance: `completed` means the child produced a final answer, not that requirements were satisfied or tests passed. The parent remains responsible for inspecting actual artifacts, integration, and necessary validation.
 
 ### 3. Bounded execution observability
 
@@ -42,7 +44,7 @@ Implemented in the current source: `delegate_list`, unified `delegate_status`, r
 - [ ] On a limit-triggered stop, record the reason, retain available output and usage, and complete owned execution-resource cleanup. Cancellation does not roll back file changes or external side effects.
 - [ ] Evaluate token/cost policies later. Delayed or missing usage and estimated pricing prevent a promise of an exact supplier-billing ceiling.
 
-The recommended next increment is **a lightweight result handoff template**: make work manageable and its output reviewable before adding more execution controls.
+The lightweight template is delivered; unchecked follow-ups remain candidates, not implementation or release commitments.
 
 ## Delivered foundations
 

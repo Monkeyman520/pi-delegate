@@ -163,7 +163,7 @@ export default function fixture(pi: ExtensionAPI): void {
 					stream.push({ type: "error", reason, error: message });
 					stream.end();
 				};
-				if (prompt.includes("hang") && !prompt.startsWith("DELEGATE ")) {
+				if (/\bhang\b/.test(prompt) && !prompt.startsWith("DELEGATE ")) {
 					options?.signal?.addEventListener(
 						"abort",
 						() => terminalError("aborted", "fixture aborted"),

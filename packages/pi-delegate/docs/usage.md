@@ -32,6 +32,31 @@ Children do not register any of these tools or the parent-only `/delegates` task
 | `model` | No | Exact configured `{ "provider": "...", "id": "..." }` identity; omitted inherits the current parent model. |
 | `thinkingLevel` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; omitted independently inherits the current parent level. |
 | `pressure` | No | Per-task warning and urgent finish-reminder thresholds. Omitted fields use defaults. |
+| `resultFormat` | No | `"handoff"` requests an advisory result handoff in either mode; omission preserves existing free-text behavior. Other explicit values are rejected. |
+
+### Optional result handoff
+
+```json
+{
+  "task": "Review error handling in src/ and identify risks",
+  "context": "Analyze only; do not modify files",
+  "resultFormat": "handoff"
+}
+```
+
+The same opt-in works with `background: true` and survives queueing. When omitted, no handoff instructions are added, including for coding or worktree tasks. The child is asked for a concise, readable report covering:
+
+- Completed work and main conclusions, with unfinished work or remaining scope stated separately.
+- Changed file paths and short descriptions, or an explicit no-file-changes statement.
+- Available commit references, patch paths or other artifact paths, or a statement that none are available.
+- Checks actually performed, their commands and results; checks not performed and why.
+- Blockers and decisions needed from the parent, with options/recommendation when applicable, or a statement that none are needed.
+
+Explicit task-specific output requirements take precedence: a task requiring only JSON should still return only JSON. The convention grants no additional permission to edit files, commit, generate patches or create artifacts. Analysis/review/testing tasks need not use Git or produce changes. Unknown facts, unavailable artifacts and unperformed checks should be reported honestly rather than invented.
+
+This is an advisory prompt request, not a parsed or validated schema. Submission does not guarantee that a model follows it or reports truthfully. Missing sections do not cause failure, retries or a repair turn. `completed` still means a final answer was produced, not that requirements were accepted or checks passed. The parent remains responsible for inspecting artifacts, validating evidence and integrating work.
+
+Results use the existing text channels, previews and full-output files. Failure, cancellation or generation limits can leave no report or a partial one; the plugin does not fabricate a complete handoff. No commit, patch, passing check or complete report is guaranteed.
 
 ### Per-task working directory and worktrees
 
