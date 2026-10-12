@@ -55,6 +55,7 @@ test("valid settings and unknown legacy fields survive load/save", (t) => {
 	config.enabled = false;
 	config.icons.mode = "unicode";
 	config.toolPresentation = false;
+	config.messageLayout = "compact";
 	config.footerSegments.cwd = false;
 	config.telemetry.tps = false;
 	config.thinkingPeek.lines = 2;

@@ -82,6 +82,7 @@ Run `/open-tui` to open the settings dialog. It provides **General**, **Appearan
   "settingsLanguage": "en",
   "cursorStyle": "block",
   "editorBorderStyle": "surround",
+  "messageLayout": "normal",
   "workline": {
     "marquee": true,
     "attachToBorder": true
@@ -126,9 +127,10 @@ Key options:
 | --- | --- | --- |
 | `settingsLanguage` | `en`, `zh` | Changes the `/open-tui` interface language |
 | `inlineFooter` | `true`, `false` | Moves the two main Footer rows into the editor's top and bottom borders; defaults to `false`. Extension status rows remain below the editor |
-| `toolPresentation` | `true`, `false` | General → Compact tool presentation; defaults to `true`. Disable for native tool rendering |
+| `toolPresentation` | `true`, `false` | General → Compact tool presentation; defaults to `true`. Disable for native tool content; message layout controls framing separately |
 | `cursorStyle` | `block`, `bar`, `underline` | `bar` and `underline` require terminal cursor-shape support |
 | `editorBorderStyle` | `surround`, `minimal` | Appearance → Editor border; Surround is the default. Minimal keeps only horizontal borders with unchanged text inset. Changes apply immediately and are saved; working status and inline footer remain supported |
+| `messageLayout` | `normal`, `compact` | Appearance → Message layout; defaults to Normal. Compact adds left rails to User/Tool blocks without their outer vertical padding; retains a blank message gap and leaves Assistant output unchanged |
 | `workline.marquee` | Boolean | Appearance → Workline marquee; defaults to `true`. Sweeps a highlight across the working message without scrolling it. Turning it off keeps status/time updates and Pi's native spinner |
 | `workline.attachToBorder` | Boolean | Appearance → Workline attached to border; defaults to `true`. Set to `false` for a row above the editor with one blank row above and below the visible Workline; never moves Workline into the footer |
 | `icons.mode` | `auto`, `nerd`, `unicode`, `ascii` | Controls footer, Workline, tool presentation and telemetry icons |
@@ -160,6 +162,16 @@ Nerd Font mode also uses four distinct glyphs. `done` describes normal host comp
 
 The footer no longer shows a second working/result timer, regardless of `inlineFooter`. Both Workline switches apply immediately and are saved. Native retry/compaction status messages keep their own meaning, styling and display priority; narrow borders may compact or truncate the Workline to fit.
 
+## Compact message layout
+
+Select **Appearance → Message layout → Compact** in `/open-tui`, or set `"messageLayout": "compact"`. Normal is the default. User blocks show a thick `▌` rail with one space before the content, without a `YOU` label or reserved label width. Tool call/result blocks use `┃` beside the existing name/status/details, matching the existing status colors: `warning` while pending/running, `success` on success and `error` on failure. ASCII icon mode uses `|`. Assistant text keeps its existing native rendering: no `PI` label, rail or new formatting.
+
+Compact removes the outer top/bottom padding of ordinary User and Tool shells, not Markdown paragraph gaps, code/diff whitespace or image spacing. Host-owned blank lines between messages remain unpainted, breaking the rail between blocks. Codemode children remain inside their parent; unrelated messages are not merged. Specialized tool bodies, controls, image protocols and detailed expansion remain usable and may retain their own internal spacing.
+
+Message layout and **General → Compact tool presentation** are independent: disabling tool presentation restores native tool content, while the selected message layout still controls its framing. Disable Compact layout as well to recover the original tool shell. The overall Enabled switch disables both enhancements. Settings apply immediately and use the existing save/failure feedback.
+
+Tool shells use the public renderer composition API. Ordinary User layout uses the approved reversible, instance-local compatibility bridge, retaining native Markdown/transformers and terminal prompt-zone markers. Native skill-invocation cards remain unchanged; any separately displayed User body is styled. Mode-off, disable and cleanup restore User rendering; incompatible hosts warn and keep native User messages. This bridge is tested against Pi 1.1.0, not a promise of future-host or real-terminal/font compatibility. See the [layout checklist](docs/development.md#compact-message-layout-verification).
+
 ## Tool presentation
 
 On Pi 1.1.0, every tool call receives unified status/name/argument summaries, a small actual-output/error preview and measured elapsed time when available: native tools, editing/search extensions, delegate tools, computer-use, MCP and other extensions. Newly encountered tools do not need a styling allowlist entry or dedicated renderer. Verified native contracts add target/command summaries and edit diff previews; unknown schemas use bounded generic argument summaries instead of guessing semantics from a familiar name. Status follows host error evidence, not words such as “error” in output. Historical calls without timing do not acquire a synthetic duration. Expand with Pi's normal tool-expansion shortcut (shown on the card) for available arguments/results; images and their show/hide control, host truncation notices and saved full-output paths remain accessible.
@@ -170,7 +182,7 @@ Codemode stays one parent card. Unified child rows cover all **observed** tool n
 
 Expansion shows the complete available script and parent content plus host-provided child records. **Child arguments/errors are host summaries and may already be truncated; raw child results are not additionally retained.** If a script reads files but returns only a count, expansion cannot recover those files. Parent images, host truncation and full-output file access retain the normal host behavior; expansion cannot restore content omitted by the host.
 
-Disable **General → Compact tool presentation** (`toolPresentation: false`) to return to native rendering; the overall Enabled switch also disables this enhancement. Older hosts without the public renderer API keep native tools and warn that enhanced presentation is unavailable. This changes presentation only, not execution, permissions, transcripts or model-facing results. Live-terminal density, scrolling, images and IME behavior still require the [interactive checklist](docs/development.md#tool-presentation-verification).
+Disable **General → Compact tool presentation** (`toolPresentation: false`) to return to native tool content (select Normal message layout for the original shell); the overall Enabled switch also disables this enhancement. Older hosts without the public renderer API keep native tools and warn that enhanced presentation is unavailable. This changes presentation only, not execution, permissions, transcripts or model-facing results. Live-terminal density, scrolling, images and IME behavior still require the [interactive checklist](docs/development.md#tool-presentation-verification).
 
 ## Cursor rendering
 

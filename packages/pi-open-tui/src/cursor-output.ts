@@ -137,7 +137,7 @@ export interface CursorOutput {
 }
 
 /** Non-public compatibility bridge; never patches host files, prototypes or stdout. */
-export function installCursorOutput(tui: TUI, unavailable: () => void): CursorOutput | undefined {
+export function installCursorOutput(tui: TUI, unavailable: () => void, beforeRebind?: () => void): CursorOutput | undefined {
 	let renderer: Renderer;
 	try {
 		renderer = resolveRenderer(tui);
@@ -161,6 +161,7 @@ export function installCursorOutput(tui: TUI, unavailable: () => void): CursorOu
 	function bind(next: Renderer): void {
 		if (next.terminal !== terminal || ![next.doRender, next.requestRender, next.renderNow].every((method) => typeof method === "function") || next.doRender.constructor.name === "AsyncFunction"
 			|| (next.mode !== "regular" && next.mode !== "fullscreen")) throw new Error("Unsupported TUI renderer");
+		beforeRebind?.();
 		const entries: Array<() => void> = [];
 		const render = next.doRender;
 		try {

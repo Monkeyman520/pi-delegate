@@ -1,8 +1,9 @@
 import * as host from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, Theme, ToolRenderers, ToolRendererResolver, CodemodeToolDetails } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Text, getCapabilities, imageFallback, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { type Component, Box, Container, Spacer, Text, getCapabilities, imageFallback, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { OpenTuiConfig } from "./config.ts";
 import { resolveGlyphs } from "./icons.ts";
+import { MessageRail } from "./message-layout.ts";
 
 type Result = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
 type ToolRenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
@@ -192,11 +193,14 @@ export class ToolPresentation {
 	private status(context: ToolRenderContext): Status {
 		return context.isPartial ? context.executionStarted ? "running" : "pending" : context.isError ? "error" : "ok";
 	}
+	private statusColor(status: Status): "error" | "success" | "warning" {
+		return status === "error" ? "error" : status === "ok" ? "success" : "warning";
+	}
 	private statusText(status: Status, theme: Theme): string {
 		const glyphs = resolveGlyphs(this.getConfig().icons.mode);
 		const icon = status === "ok" ? glyphs.done : status === "error" ? glyphs.failed
 			: status === "cancelled" ? glyphs.interrupted : glyphs.working;
-		return theme.fg(status === "error" ? "error" : status === "ok" ? "success" : "warning", `${icon} ${status}`);
+		return theme.fg(this.statusColor(status), `${icon} ${status}`);
 	}
 	private elapsed(context: ToolRenderContext, state: CardState): number | undefined {
 		if (finite(context.durationMs)) return context.durationMs;
@@ -223,6 +227,24 @@ export class ToolPresentation {
 			};
 		}
 		return state.nativeResult;
+	}
+	private frame(component: Component, context: ToolRenderContext, state: CardState, nativeShell: ToolRenderers["renderShell"], call: boolean, theme: Theme): Component {
+		return new ToolContainer(() => {
+			const config = this.getConfig();
+			if (config.enabled && config.messageLayout === "compact") {
+				return [new MessageRail(component, (text) => theme.fg(this.statusColor(this.status(context)), text), config.icons.mode === "ascii" ? "|" : "┃")];
+			}
+			if (nativeShell === "self") return [component];
+			// Reproduce the host default shell across the call/result sections. The host
+			// supplies one leading message gap; only the call has top padding and only
+			// the final section has bottom padding. No private tool component patch.
+			const bg = context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg";
+			const box = new Box(context.outputPad, 0, (text) => theme.bg(bg, text));
+			if (call) box.addChild(new Spacer(1));
+			box.addChild(component);
+			if (!call || !state.result) box.addChild(new Spacer(1));
+			return [box];
+		});
 	}
 	private compose(name: string, base: ToolRenderers, recognized: boolean): ToolRenderers {
 		const optimized = (args: unknown, result?: Result) => recognized && target(name, args) !== undefined
@@ -258,11 +280,14 @@ export class ToolPresentation {
 		};
 		return {
 			...base,
+			// Self framing allows a live layout toggle; normal mode reconstructs the
+			// original default shell, or passes through an existing self renderer.
+			renderShell: "self",
 			renderCall: (args, theme, context) => {
 				const state = this.card(context);
 				const live = state.epoch === this.epoch ? this.live.get(context.toolCallId) : undefined;
 				if (live) live.invalidate = context.invalidate;
-				return new ToolContainer(() => {
+				return this.frame(new ToolContainer(() => {
 					if (!this.enhanced()) return [renderCall(args, theme, context, state)];
 					const special = optimized(args, state.result);
 					const header: Component = {
@@ -282,13 +307,13 @@ export class ToolPresentation {
 					// Do not flatten custom components: they may own buttons, focus or mouse regions.
 					const details = context.expanded && !special && base.renderCall ? [new Text(argumentsText(args, true), 0, 0)] : [];
 					return [header, ...details, ...(context.expanded || !special && base.renderCall ? [renderCall(args, theme, context, state)] : [])];
-				});
+				}), context, state, base.renderShell, true, theme);
 			},
 			renderResult: (result, options, theme, context) => {
 				const state = this.card(context);
 				state.result = result;
 				if (recognized && name === "bash" && !options.isPartial && state.nativeResult) renderResult(result, options, theme, context, state);
-				return new ToolContainer(() => {
+				return this.frame(new ToolContainer(() => {
 					const special = optimized(context.args, result);
 					const calls = special && name === "codemode" ? codemodeCalls(result.details) : undefined;
 					if (!this.enhanced() || options.expanded) {
@@ -345,7 +370,7 @@ export class ToolPresentation {
 						},
 					};
 					return [preview, ...body];
-				});
+				}), context, state, base.renderShell, false, theme);
 			},
 		};
 	}

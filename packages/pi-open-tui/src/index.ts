@@ -171,6 +171,12 @@ export default function (pi: ExtensionAPI) {
 				},
 				config.editorBorderStyle,
 				createWorklineRenderer(() => state, () => config, () => ctx.ui.theme, Date.now, () => worklineTelemetry),
+				{
+					getConfig: () => config,
+					unavailable: () => ctx.ui.notify(config.settingsLanguage === "zh"
+						? "open-tui：当前宿主不支持紧凑用户消息布局；保留原生用户消息"
+						: "open-tui: compact User message layout unavailable on this host; retaining native User messages", "warning"),
+				},
 			);
 			active = true;
 		}
@@ -453,6 +459,7 @@ export default function (pi: ExtensionAPI) {
 					: `open-tui: settings applied for this session only; save failed: ${detail}`, "warning");
 			}
 			config = newConfig;
+			editor?.requestRender();
 			if (newConfig.thinkingPeek.lines === 0 || !newConfig.enabled) {
 				resetPeek();
 				clearPeekLabel(lastCtx);

@@ -84,6 +84,7 @@ pi install /absolute/path/to/checkout/packages/pi-open-tui
   "settingsLanguage": "zh",
   "cursorStyle": "block",
   "editorBorderStyle": "surround",
+  "messageLayout": "normal",
   "workline": {
     "marquee": true,
     "attachToBorder": true
@@ -128,9 +129,10 @@ pi install /absolute/path/to/checkout/packages/pi-open-tui
 | --- | --- | --- |
 | `settingsLanguage` | `en`、`zh` | 切换 `/open-tui` 设置界面的语言 |
 | `inlineFooter` | `true`、`false` | 将两条主要 Footer 信息行移入编辑器上下边框以节省垂直空间，默认关闭；扩展状态行仍显示在编辑器外 |
-| `toolPresentation` | `true`、`false` | 常规 → 紧凑工具展示；默认开启，关闭后使用原生工具渲染 |
+| `toolPresentation` | `true`、`false` | 常规 → 紧凑工具展示；默认开启，关闭后使用原生工具内容；消息布局独立控制外壳 |
 | `cursorStyle` | `block`、`bar`、`underline` | `bar` 和 `underline` 需要终端支持光标形状转义序列 |
 | `editorBorderStyle` | `surround`、`minimal` | 外观 → 编辑器边框；默认「环绕」。「简洁」仅保留上下横线，文字左右留白不变。切换即时生效并保存，仍支持工作状态和内联底栏 |
+| `messageLayout` | `normal`、`compact` | 外观 → 消息布局；默认「常规」。「紧凑」为 User／Tool 添加左侧竖线、去掉块内上下额外留白，保留消息间空行，Assistant 输出不变 |
 | `workline.marquee` | 布尔开关 | 外观 → Workline 跑马灯；默认开启。工作文字上有高亮扫光，不横向滚动文字。关闭后状态和耗时仍更新，Pi 原生旋转指示器不受影响 |
 | `workline.attachToBorder` | 布尔开关 | 外观 → Workline 贴合边框；默认开启。关闭后在编辑器上方独占一行，可见 Workline 上下各留一行空白，绝不移入 footer |
 | `icons.mode` | `auto`、`nerd`、`unicode`、`ascii` | 控制底栏、Workline、工具展示和遥测通知使用的图标 |
@@ -162,6 +164,16 @@ Nerd Font 模式同样使用四种不同图标。`done` 只表示宿主正常完
 
 无论 `inlineFooter` 是否开启，footer 都不再额外显示 working／结果计时。两个 Workline 开关即时生效并保存。原生重试、压缩等状态保留其语义、样式和展示优先级；边框较窄时会精简或截断 Workline，避免超出宽度。
 
+## 紧凑消息布局
+
+在 `/open-tui` 中选择**外观 → 消息布局 → 紧凑**，或设置 `"messageLayout": "compact"`。默认仍为「常规」。User 消息使用粗竖线 `▌`，竖线后留一个空格直接显示正文，不显示 `YOU`，也不预留标签宽度；Tool 调用和结果使用 `┃`，竖线复用当前状态的主题颜色：等待／运行中使用 `warning`，成功使用 `success`，失败使用 `error`，保留现有名称、状态及详情。ASCII 图标模式使用 `|`。Assistant 保持原生输出，不加 `PI`、竖线或新排版。
+
+紧凑模式只去掉普通 User／Tool 外壳的上下额外留白，不删除 Markdown 段落、代码／diff 内部的空行，也不压掉图片间距。消息之间保留宿主提供的空白行，空白处不画竖线。Codemode 子调用仍属于父消息，不合并无关消息。第三方工具正文、控件、图片协议和详情展开继续可用，其自身内部留白可能保留。
+
+消息布局与**常规 → 紧凑工具展示**独立：关闭工具展示会恢复原生工具内容，但所选消息布局仍控制外壳；同时切回「常规」布局即可恢复原有工具外壳。总「启用」开关关闭两项增强。设置即时生效，沿用现有保存及失败反馈。
+
+Tool 外壳通过公开渲染 API 组合。普通 User 布局采用已获确认的可恢复、实例级兼容适配，保留原生 Markdown／转换器和终端消息控制标记。原生技能调用卡片不变，单独显示的用户正文仍采用新布局。关闭模式、禁用或清理时恢复 User 渲染；宿主不兼容时告警并保留原生 User 消息。兼容测试基于 Pi 1.1.0，不代表未来宿主或实际终端字体已验证，见[布局实测清单](docs/development.md#compact-message-layout-verification)。
+
 ## 工具展示
 
 Pi 1.1.0 上，所有工具调用都获得统一的状态／名称／参数摘要、少量真实输出／错误预览，以及可测得的耗时：覆盖原生工具、编辑／搜索扩展、delegate、computer-use、MCP 和其他扩展。新工具不需要加入样式白名单或编写专用 renderer。已验证的原生工具契约额外提供目标／命令摘要和编辑 diff 预览；未知 schema 使用有界通用参数摘要，不因名称熟悉就猜测语义。状态依据宿主错误证据，不搜索输出中的 “error” 等词；缺少计时的历史调用不会获得虚构耗时。使用卡片提示的 Pi 原生工具展开快捷键查看可用参数和结果；图片及其显示／隐藏控制、宿主截断提示和完整输出文件路径仍可访问。
@@ -172,7 +184,7 @@ Codemode 保持为一张父卡片，所有已观察到的子工具名称（包�
 
 展开后展示完整的可用脚本和父返回内容，以及宿主提供的子记录。**子参数／错误是宿主摘要，可能已经截断；不会额外保存子调用的原始结果。** 如果脚本读取文件但只返回数量，展开无法恢复这些文件内容。父图片、宿主截断及完整输出文件访问保留原生行为；展开不能恢复宿主已丢弃的内容。
 
-关闭**常规 → 紧凑工具展示**（`toolPresentation: false`）可回到原生渲染；总「启用」开关也会关闭此增强。没有公开渲染 API 的旧宿主保留原生工具并提示增强能力不可用。这里只改变展示，不改变执行、权限、对话记录或模型接收的结果。真实终端中的密度、滚动、图片和输入法行为仍需按[交互清单](docs/development.md#tool-presentation-verification)验证。
+关闭**常规 → 紧凑工具展示**（`toolPresentation: false`）可回到原生工具内容（切回「常规」消息布局以恢复原有外壳）；总「启用」开关也会关闭此增强。没有公开渲染 API 的旧宿主保留原生工具并提示增强能力不可用。这里只改变展示，不改变执行、权限、对话记录或模型接收的结果。真实终端中的密度、滚动、图片和输入法行为仍需按[交互清单](docs/development.md#tool-presentation-verification)验证。
 
 ## 光标渲染
 

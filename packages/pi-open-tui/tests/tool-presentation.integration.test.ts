@@ -9,16 +9,20 @@ import {
 	DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager, getPackageDir, initTheme, VERSION,
 	type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type ModelRegistry, type ToolInfo, type ToolRenderers, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text, TuiMainScreen, TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { codemodeCalls, selectChildren, ToolPresentation } from "../src/tool-presentation.ts";
 import openTui from "../src/index.ts";
 import { createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent";
+import { installUserMessageLayout } from "../src/user-message-layout.ts";
+import { MessageRail } from "../src/message-layout.ts";
 
 // Actual upgraded host registration, resolver chain and ToolExecutionComponent, with controlled
 // results and an in-memory terminal. No provider, real terminal/font or IME visual claims.
 const { ToolExecutionComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/tool-execution.js")).href);
 const hostTheme = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/theme/theme.js")).href);
+const { UserMessageComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/user-message.js")).href);
+const { AssistantMessageComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/assistant-message.js")).href);
 initTheme("dark");
 
 async function fixture(t: test.TestContext, mode: "regular" | "fullscreen" = "regular") {
@@ -107,6 +111,33 @@ function styledRuns(line: string): Array<{ text: string; bg: string; fg: string;
 	}
 	return runs;
 }
+
+test("normal framing matches the native default/self shell across padding, themes and result states", async (t) => {
+	const f = await fixture(t);
+	f.config.toolPresentation = false;
+	t.after(() => initTheme("dark"));
+	for (const theme of ["dark", "light"] as const) for (const renderShell of ["default", "self"] as const) {
+		initTheme(theme);
+		const base: ToolRenderers = {
+			renderShell,
+			renderCall: (_args, theme) => new Text(theme.fg("toolTitle", "CALL\n\n  indented call"), 0, 0),
+			renderResult: (_result, _options, theme) => new Text(theme.fg("toolOutput", "RESULT\n\n  indented result"), 0, 0),
+		};
+		for (const outputPad of [0, 2]) {
+			const adapted = f.component("custom", "same", {}, base);
+			const native = new ToolExecutionComponent("custom", "same", {}, { outputPad }, base, f.tui, f.cwd);
+			adapted.setOutputPad(outputPad);
+			for (const state of ["pending", "partial", "ok", "error"] as const) {
+				if (state !== "pending") {
+					const value = result("result", undefined, state === "error");
+					adapted.updateResult(value, state === "partial"); native.updateResult(value, state === "partial");
+				}
+				for (const width of [12, 80]) assert.deepEqual(adapted.render(width), native.render(width),
+					`${theme}/${renderShell}/${outputPad}/${state}/${width}: native bytes and whitespace`);
+			}
+		}
+	}
+});
 
 for (const mode of ["regular", "fullscreen"] as const) {
 	test(`${mode}: truncated summaries preserve the host background through ellipsis, duration and padding`, async (t) => {
@@ -215,6 +246,7 @@ for (const mode of ["regular", "fullscreen"] as const) {
 test("host error evidence, tail notices/paths, edit diff and image controls survive", async (t) => {
 	const f = await fixture(t);
 	const read = f.component("read", "read", { path: "file.txt" });
+	f.config.messageLayout = "compact";
 	read.updateResult(result("error is just a word\n" + "many\n".repeat(15) + "[Output truncated: Full output saved to: /tmp/full-tail.txt]", { truncation: { truncated: true }, fullOutputPath: "/tmp/中文/full-output.txt" }));
 	assert.match(frame(read), /\+ ok/);
 	assert.match(frame(read), /Output truncated by host/);
@@ -401,9 +433,10 @@ test("generic arguments are bounded and sanitized without inventing familiar-nam
 	assert.match(frame(cycle), /arguments unavailable/);
 });
 
-for (const renderShell of ["default", "self"] as const) {
-	test(`${renderShell}: specialized components retain mouse/focus/input, state and lastComponent through composition`, async (t) => {
+for (const renderShell of ["default", "self"] as const) for (const messageLayout of ["normal", "compact"] as const) {
+	test(`${renderShell}/${messageLayout}: specialized components retain mouse/focus/input, state and lastComponent through composition`, async (t) => {
 		const f = await fixture(t, "fullscreen");
+		f.config.messageLayout = messageLayout;
 		let clicks = 0; let invalidations = 0;
 		const keys: string[] = [];
 		const seenLast: Array<Component | undefined> = [];
@@ -436,7 +469,7 @@ for (const renderShell of ["default", "self"] as const) {
 			for (const label of ["CALL CONTROL", "RESULT CONTROL"]) {
 				const y = lines.findIndex((line: string) => stripTerminalSequences(line).includes(label));
 				assert.ok(y >= 0);
-				const handled = card.handleMouse({ type: "click", button: "left", x: 1, y, screenX: 1, screenY: y, width: 100, height: lines.length, shift: false, ctrl: false, alt: false }) as { handled?: boolean; focus?: boolean; focusTarget?: Component; target: { component: Component } };
+				const handled = card.handleMouse({ type: "click", button: "left", x: messageLayout === "compact" ? 3 : 1, y, screenX: 1, screenY: y, width: 100, height: lines.length, shift: false, ctrl: false, alt: false }) as { handled?: boolean; focus?: boolean; focusTarget?: Component; target: { component: Component } };
 				assert.equal(handled.handled, true); assert.equal(handled.focus, true);
 				const focused = handled.focusTarget ?? handled.target.component;
 				assert.equal(focused, label === "CALL CONTROL" ? callControl : resultControl);
@@ -633,4 +666,200 @@ test("unsupported public capability preserves native presentation and emits an e
 	await handlers.get("session_start")!({ type: "session_start" }, ctx);
 	assert.ok(notices.some((message) => message.includes("public renderer API") && message.includes("native presentation")));
 	await handlers.get("session_shutdown")!({ type: "session_shutdown" }, ctx);
+});
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: compact Tool rails match current status colors across states, icons and expansion`, async (t) => {
+		const f = await fixture(t, mode);
+		f.config.messageLayout = "compact";
+		t.after(() => initTheme("dark"));
+		for (const theme of ["dark", "light"] as const) {
+			initTheme(theme);
+			for (const icons of ["ascii", "unicode"] as const) {
+				f.config.icons.mode = icons;
+				const glyph = icons === "ascii" ? "|" : "┃";
+				for (const name of ["read", "future-tool"]) for (const status of ["pending", "partial", "running", "ok", "error"] as const) {
+					const card = f.component(name, `${theme}-${icons}-${name}-${status}`, { path: "file.txt" });
+					if (status === "running") card.markExecutionStarted();
+					if (status !== "pending") card.updateResult(result("body output", undefined, status === "error"), status === "partial" || status === "running");
+					const expected = styledRuns(hostTheme.theme.fg(status === "error" ? "error" : status === "ok" ? "success" : "warning", glyph))[0]!.fg;
+					for (const enhanced of [true, false]) for (const expanded of [true, false]) {
+						f.config.toolPresentation = enhanced;
+						card.setExpanded(expanded); card.invalidate();
+						const lines: string[] = card.render(80);
+						assert.equal(lines[0], "", "message gap stays unpainted");
+						assert.ok(lines.length > 1);
+						for (const line of lines.slice(1)) {
+							assert.ok(stripTerminalSequences(line).startsWith(`${glyph} `));
+							assert.equal(styledRuns(line)[0]!.fg, expected, `${theme}/${icons}/${name}/${status}/${enhanced}/${expanded}: rail color`);
+						}
+					}
+				}
+			}
+		}
+	});
+	test(`${mode}: compact User/Tool layout retains one message gap and leaves Assistant byte-for-byte unchanged`, async (t) => {
+		const f = await fixture(t, mode);
+		f.config.icons.mode = "unicode";
+		const chat = new Container();
+		const user = new UserMessageComponent("用户请求\n\n第二段");
+		const assistant = new AssistantMessageComponent({
+			role: "assistant", content: [{ type: "text", text: "正常回复\n\n**正文保持原样**" }], stopReason: "stop",
+		});
+		const nativeUser = user.render;
+		const nativeAssistant = assistant.render;
+		const userBefore = user.render(80);
+		const assistantBefore = assistant.render(80);
+		const first = f.component("read", "compact-first", { path: "file.txt" });
+		const second = f.component("future-tool", "compact-second", { query: "text" });
+		first.updateResult(result("file output", undefined, false, 12));
+		second.updateResult(result("another output", undefined, false, 20));
+		chat.addChild(user); chat.addChild(first); chat.addChild(second); chat.addChild(assistant);
+		if (f.tui instanceof TuiAltScreen) f.tui.setLayoutRoot(new VStack([new ScrollView(chat, { primary: true })]));
+		else f.tui.addChild(chat);
+		const warnings: string[] = [];
+		const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => warnings.push("unavailable"));
+		t.after(() => adapter.cleanup());
+		assert.equal(user.render, nativeUser);
+		assert.deepEqual(user.render(80), userBefore, "default mode unchanged");
+		const normalTool = first.render(80);
+		f.config.messageLayout = "compact";
+		adapter.refresh();
+		const compactUser: string[] = user.render(80);
+		const plainUser = compactUser.map(stripTerminalSequences);
+		assert.match(plainUser[0]!, /^▌ 用户请求/);
+		assert.match(plainUser.at(-1)!, /^▌ 第二段/);
+		assert.doesNotMatch(plainUser.join("\n"), /YOU/);
+		assert.ok(plainUser.some((line) => /^▌ +$/.test(line)), "paragraph blank remains inside the rail");
+		assert.ok(compactUser[0]!.startsWith("\x1b]133;A\x07"));
+		assert.ok(compactUser.at(-1)!.includes("\x1b]133;B\x07\x1b]133;C\x07"));
+		const compactTool = first.render(80).map(stripTerminalSequences);
+		assert.equal(compactTool[0], "", "host-owned gap is unpainted");
+		assert.ok(compactTool.slice(1).every((line: string) => line.startsWith("┃ ")));
+		assert.equal(normalTool.length - compactTool.length, 2, "remove only outer vertical tool padding");
+		assert.deepEqual(assistant.render(80), assistantBefore);
+		assert.equal(assistant.render, nativeAssistant);
+		const lines: string[] = chat.render(80).map(stripTerminalSequences);
+		for (const token of ["read file.txt", "future-tool", "正常回复"]) {
+			const index = lines.findIndex((line) => line.includes(token));
+			assert.ok(index > 0);
+			assert.equal(lines[index - 1]!.trim(), "", `one gap before ${token}`);
+			assert.notEqual(lines[index - 2]!.trim(), "", "not stacked blank margins");
+		}
+		for (const width of [1, 2, 7, 12, 22, 80]) {
+			assert.ok(user.render(width).every((line: string) => visibleWidth(line) <= width));
+			frame(first, width); frame(second, width);
+		}
+		first.setExpanded(true); assert.match(frame(first), /file output/);
+		f.config.toolPresentation = false;
+		assert.match(frame(first), /┃/); assert.doesNotMatch(frame(first), /ok read/);
+		f.config.messageLayout = "normal"; adapter.refresh();
+		assert.equal(user.render, nativeUser); assert.deepEqual(user.render(80), userBefore);
+		assert.doesNotMatch(frame(first), /┃/);
+		f.config.messageLayout = "compact"; adapter.refresh();
+		f.config.enabled = false; adapter.refresh();
+		assert.equal(user.render, nativeUser); assert.deepEqual(user.render(80), userBefore);
+		assert.doesNotMatch(frame(first), /┃/);
+		assert.deepEqual(warnings, []);
+	});
+}
+
+test("User adaptation preserves native Markdown transforms, code whitespace, themes and rebuilds", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	const widths: number[] = [];
+	const user = new UserMessageComponent("before\n\n```text\n  indent\n\n  end\n```", undefined, 2, [
+		(text: string, context: { availableWidth: number; messageType: string }) => {
+			assert.equal(context.messageType, "user"); widths.push(context.availableWidth); return text.replace("before", "after");
+		},
+	]);
+	f.tui.addChild(user);
+	const originalChildren = user.children;
+	const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => assert.fail("unexpected fallback"));
+	t.after(() => { adapter.cleanup(); initTheme("dark"); });
+	const nativeRender = UserMessageComponent.prototype.render;
+	for (const theme of ["dark", "light"] as const) {
+		initTheme(theme); user.invalidate();
+		const lines: string[] = user.render(80);
+		assert.match(stripTerminalSequences(lines.join("\n")), /after/);
+		assert.ok(widths.includes(78), "transform gets actual body width, not full terminal width");
+		assert.ok(lines.every((line) => visibleWidth(line) <= 80));
+		assert.equal(user.children, originalChildren, "keeps real native Markdown");
+		const raw: string[] = nativeRender.call(user, 82);
+		const expectedBody = raw.slice(1, -1).map((line: string) => stripTerminalSequences(line).slice(2, 80));
+		const actualBody = lines.map((line) => stripTerminalSequences(line).slice(2));
+		assert.deepEqual(actualBody, expectedBody, "retain code and interior blank rows exactly");
+	}
+	user.setOutputPad(0); assert.match(stripTerminalSequences(user.render(80).join("\n")), /after/);
+	const rebuilt = user.children[0];
+	assert.ok(rebuilt instanceof Markdown);
+	adapter.cleanup(); adapter.cleanup();
+	assert.equal(user.render, nativeRender);
+	assert.equal(Object.hasOwn(user, "render"), false);
+});
+
+test("User adaptation discovers streamed/history components, releases detached users and fails safely", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	const warnings: string[] = [];
+	const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => warnings.push("fallback"));
+	t.after(() => adapter.cleanup());
+	const user = new UserMessageComponent("late history");
+	const native = user.render;
+	f.tui.addChild(user);
+	f.tui.start(); f.tui.renderNow(true);
+	assert.notEqual(user.render, native, "discovered before a real host frame");
+	assert.match(stripTerminalSequences(f.writes()), /\| late history/);
+	assert.doesNotMatch(stripTerminalSequences(f.writes()), /YOU/);
+	f.tui.removeChild(user); adapter.refresh();
+	assert.equal(user.render, native, "detached history does not stay retained/patched");
+	const incompatible = new UserMessageComponent("unsupported");
+	incompatible.children = [new Text("CUSTOM USER", 0, 0)];
+	const before = incompatible.render(80);
+	f.tui.addChild(incompatible); adapter.refresh(); adapter.refresh();
+	assert.deepEqual(incompatible.render(80), before); assert.equal(warnings.length, 1);
+	const unsupported = installUserMessageLayout({} as never, () => f.config, () => hostTheme.theme, () => warnings.push("missing host"));
+	unsupported.refresh(); unsupported.cleanup();
+	assert.equal(warnings.length, 2, "missing host warns once without throwing");
+});
+
+test("User adapter rebinds Pi's stable reference and never patches prototypes or another TUI", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	const { createInteractiveTuiReference } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/tui-renderer.js")).href);
+	let live = f.tui;
+	const reference = createInteractiveTuiReference(() => live);
+	const a = new UserMessageComponent("old"); const b = new UserMessageComponent("new");
+	live.addChild(a);
+	const original = a.render; const prototype = UserMessageComponent.prototype.render;
+	const nativeFrame = Reflect.get(live, "doRender");
+	const adapter = installUserMessageLayout(reference, () => f.config, () => hostTheme.theme, () => assert.fail("unexpected fallback"));
+	t.after(() => adapter.cleanup());
+	const old = live;
+	live = new TuiAltScreen(f.terminal);
+	live.setLayoutRoot(new VStack([new ScrollView(new VStack([b]), { primary: true })]));
+	adapter.refresh();
+	assert.equal(a.render, original); assert.equal(Reflect.get(old, "doRender"), nativeFrame);
+	assert.notEqual(b.render, original); assert.equal(UserMessageComponent.prototype.render, prototype);
+	adapter.cleanup();
+	assert.equal(b.render, original);
+	assert.equal(Object.getOwnPropertySymbols(live).some((symbol) => symbol.description === "open-tui-user-layout"), false);
+});
+
+test("message rail preserves opaque image rows and routes child coordinates, focus and input", () => {
+	const events: Array<{ x: number; width: number }> = [];
+	const image = "\x1b_Gpayload\x1b\\";
+	const child: Component = {
+		render: () => [image, "control"], invalidate() {},
+		handleMouse(event) { events.push(event); return { handled: true, focus: true }; },
+		handleInput() {},
+	};
+	const rail = new MessageRail(child, (text) => text);
+	const lines = rail.render(30);
+	assert.equal(lines[0], image); assert.equal(lines[1], "┃ control");
+	const event = { type: "click" as const, button: "left" as const, x: 4, y: 1, screenX: 4, screenY: 1, width: 30, height: 2, shift: false, ctrl: false, alt: false };
+	const handled = rail.handleMouse(event)!;
+	assert.equal(handled.target.component, child); assert.equal(handled.focus, true);
+	assert.equal(events[0]!.x, 2); assert.equal(events[0]!.width, 28);
+	assert.equal(rail.handleMouse({ ...event, x: 0 }), undefined);
 });

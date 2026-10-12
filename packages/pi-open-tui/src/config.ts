@@ -6,6 +6,7 @@ import type { IconMode } from "./icons.ts";
 export type SettingsLanguage = "en" | "zh";
 export type CursorStyle = "block" | "bar" | "underline";
 export type EditorBorderStyle = "surround" | "minimal";
+export type MessageLayout = "normal" | "compact";
 export type ThinkingPeekLines = 0 | 1 | 2;
 
 export type { IconMode } from "./icons.ts";
@@ -51,6 +52,7 @@ export interface OpenTuiConfig {
 	settingsLanguage: SettingsLanguage;
 	cursorStyle: CursorStyle;
 	editorBorderStyle: EditorBorderStyle;
+	messageLayout: MessageLayout;
 	icons: {
 		mode: IconMode;
 	};
@@ -67,6 +69,7 @@ export const DEFAULT_CONFIG: OpenTuiConfig = {
 	settingsLanguage: "en",
 	cursorStyle: "block",
 	editorBorderStyle: "surround",
+	messageLayout: "normal",
 	icons: {
 		mode: "auto",
 	},
@@ -133,6 +136,7 @@ function normalizeConfig(value: unknown): OpenTuiConfig {
 	config.settingsLanguage = enumValue(config.settingsLanguage, ["en", "zh"], DEFAULT_CONFIG.settingsLanguage);
 	config.cursorStyle = enumValue(config.cursorStyle, ["block", "bar", "underline"], DEFAULT_CONFIG.cursorStyle);
 	config.editorBorderStyle = enumValue(config.editorBorderStyle, ["surround", "minimal"], DEFAULT_CONFIG.editorBorderStyle);
+	config.messageLayout = enumValue(config.messageLayout, ["normal", "compact"], DEFAULT_CONFIG.messageLayout);
 	config.icons.mode = enumValue(config.icons.mode, ["auto", "nerd", "unicode", "ascii"], DEFAULT_CONFIG.icons.mode);
 	config.thinkingPeek.lines = enumValue(config.thinkingPeek.lines, [0, 1, 2], DEFAULT_CONFIG.thinkingPeek.lines);
 	return config;

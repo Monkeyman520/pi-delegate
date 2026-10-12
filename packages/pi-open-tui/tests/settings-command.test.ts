@@ -234,6 +234,25 @@ test("previews cursor styles from the Appearance tab", async () => {
 	editor.cleanup();
 });
 
+test("message layout defaults to normal, toggles live and localizes in Appearance", async () => {
+	for (const language of ["en", "zh"] as const) {
+		const config = structuredClone(DEFAULT_CONFIG);
+		config.settingsLanguage = language;
+		const observed: string[] = [];
+		const settings = await openSettings(config, (next) => observed.push(next.messageLayout));
+		settings.component.handleInput("\t");
+		for (let i = 0; i < 5; i++) settings.component.handleInput("\x1b[B");
+		assert.match(selectedLine(settings.component), language === "zh" ? /消息布局.*常规/ : /Message layout.*Normal/);
+		settings.component.handleInput("\r");
+		assert.equal(settings.getConfig().messageLayout, "compact");
+		assert.match(selectedLine(settings.component), language === "zh" ? /紧凑/ : /Compact/);
+		assert.equal(settings.isClosed(), false);
+		settings.component.handleInput(" ");
+		assert.deepEqual(observed, ["compact", "normal"]);
+		settings.component.handleInput("q"); await settings.waitForClose();
+	}
+});
+
 test("reconciles enabled changes with the installed UI", () => {
 	assert.equal(getPendingUiChange(true, false), "install");
 	assert.equal(getPendingUiChange(false, true), "uninstall");

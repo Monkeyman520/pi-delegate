@@ -6,10 +6,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { EditorTheme, TuiMouseEvent, TuiMouseEventResult, TUI } from "@earendil-works/pi-tui";
 import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { CursorStyle, EditorBorderStyle } from "./config.ts";
+import type { CursorStyle, EditorBorderStyle, OpenTuiConfig } from "./config.ts";
 import { findBottomBorderIndex, isEditorBorderLine, stripAnsi } from "./utils.ts";
 import { ThinkingLabelTarget } from "./thinking-label.ts";
 import { installCursorOutput, type CursorOutput } from "./cursor-output.ts";
+import { installUserMessageLayout } from "./user-message-layout.ts";
 
 function fillLine(content: string, width: number): string {
 	const truncated = truncateToWidth(content, Math.max(0, width), "");
@@ -339,6 +340,7 @@ export function installEditor(
 	inlineFooter?: InlineFooterRenderer,
 	borderStyle: EditorBorderStyle = "surround",
 	workline?: WorklineRenderer,
+	userLayout?: { getConfig(): OpenTuiConfig; unavailable(): void },
 ) {
 	let activeTui: TUI | undefined;
 	let activeEditor: OpenTuiEditor | undefined;
@@ -347,6 +349,7 @@ export function installEditor(
 	let currentBorderStyle = borderStyle;
 	let thinkingLabel: ThinkingLabelTarget | undefined;
 	let cursorOutput: CursorOutput | undefined;
+	let userMessageLayout: ReturnType<typeof installUserMessageLayout> | undefined;
 	let disposed = false;
 	let warned = false;
 	const warnCursorOutput = () => {
@@ -355,6 +358,8 @@ export function installEditor(
 		ctx.ui.notify?.("open-tui: cursor output adaptation unavailable on this host; using native cursor output", "warning");
 	};
 	const release = () => {
+		userMessageLayout?.cleanup();
+		userMessageLayout = undefined;
 		cursorOutput?.cleanup();
 		cursorOutput = undefined;
 		if (activeTui) {
@@ -372,11 +377,12 @@ export function installEditor(
 		activeTui = tui;
 		thinkingLabel = new ThinkingLabelTarget(tui);
 		previousHardwareCursor = tui.getShowHardwareCursor();
-		cursorOutput = installCursorOutput(tui, warnCursorOutput);
+		cursorOutput = installCursorOutput(tui, warnCursorOutput, () => userMessageLayout?.releaseRenderer());
 		if (!cursorOutput) warnCursorOutput();
+		if (userLayout) userMessageLayout = installUserMessageLayout(tui, userLayout.getConfig, () => ctx.ui.theme, userLayout.unavailable, () => cursorOutput?.refresh());
 		try {
 			activeEditor = new OpenTuiEditor(tui, editorTheme, keybindings, currentCursorStyle, inlineFooter, currentBorderStyle, workline,
-				() => cursorOutput?.refresh());
+				() => { userMessageLayout?.refresh(); cursorOutput?.refresh(); });
 			return activeEditor;
 		} catch (error) {
 			release();
@@ -385,6 +391,7 @@ export function installEditor(
 	});
 	return {
 		requestRender(): void {
+			userMessageLayout?.refresh();
 			activeTui?.requestRender();
 		},
 		getViewportWidth(): number | undefined {

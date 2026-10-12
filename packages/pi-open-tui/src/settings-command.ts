@@ -33,6 +33,7 @@ const COPY = {
 			language: "Language",
 			cursorStyle: "Cursor style",
 			editorBorderStyle: "Editor border",
+			messageLayout: "Message layout",
 			worklineMarquee: "Workline marquee",
 			worklineAttachToBorder: "Workline attached to border",
 			iconMode: "Icon mode",
@@ -60,6 +61,7 @@ const COPY = {
 			languages: { en: "English", zh: "简体中文" },
 			cursorStyles: { block: "Block", bar: "Bar", underline: "Underline" },
 			editorBorderStyles: { surround: "Surround", minimal: "Minimal" },
+			messageLayouts: { normal: "Normal", compact: "Compact" },
 			icons: { auto: "Auto", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
 		},
 	},
@@ -75,6 +77,7 @@ const COPY = {
 			language: "语言",
 			cursorStyle: "光标样式",
 			editorBorderStyle: "编辑器边框",
+			messageLayout: "消息布局",
 			worklineMarquee: "Workline 跑马灯",
 			worklineAttachToBorder: "Workline 贴合边框",
 			iconMode: "图标模式",
@@ -102,6 +105,7 @@ const COPY = {
 			languages: { en: "English", zh: "简体中文" },
 			cursorStyles: { block: "块", bar: "竖线", underline: "下划线" },
 			editorBorderStyles: { surround: "环绕", minimal: "简洁" },
+			messageLayouts: { normal: "常规", compact: "紧凑" },
 			icons: { auto: "自动", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
 		},
 	},
@@ -180,6 +184,7 @@ function buildIconsItems(config: OpenTuiConfig, copy: SettingsCopy): SettingItem
 		{ id: "editorBorderStyle", label: copy.labels.editorBorderStyle, currentValue: copy.values.editorBorderStyles[config.editorBorderStyle] },
 		{ id: "worklineMarquee", label: copy.labels.worklineMarquee, currentValue: flag(config.workline.marquee) },
 		{ id: "worklineAttachToBorder", label: copy.labels.worklineAttachToBorder, currentValue: flag(config.workline.attachToBorder) },
+		{ id: "messageLayout", label: copy.labels.messageLayout, currentValue: copy.values.messageLayouts[config.messageLayout] },
 	];
 }
 
@@ -244,6 +249,7 @@ function handleSettingChange(
 		if (itemId === "editorBorderStyle") return { ...config, editorBorderStyle: config.editorBorderStyle === "surround" ? "minimal" : "surround" };
 		if (itemId === "worklineMarquee") return { ...config, workline: { ...config.workline, marquee: !config.workline.marquee } };
 		if (itemId === "worklineAttachToBorder") return { ...config, workline: { ...config.workline, attachToBorder: !config.workline.attachToBorder } };
+		if (itemId === "messageLayout") return { ...config, messageLayout: config.messageLayout === "normal" ? "compact" : "normal" };
 	}
 	if (tab === "segments") {
 		return toggleSetting(config, itemId as keyof OpenTuiConfig["footerSegments"]);

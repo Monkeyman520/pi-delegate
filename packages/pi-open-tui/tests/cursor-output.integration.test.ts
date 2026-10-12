@@ -13,6 +13,9 @@ import { createWorklineRenderer } from "../src/workline.ts";
 const modules = process.env.OPEN_TUI_CURSOR_HOST_MODULES ?? path.resolve(import.meta.dirname, "../node_modules");
 const { TuiMainScreen, TuiAltScreen } = await import(pathToFileURL(path.join(modules, "@earendil-works/pi-tui/dist/index.js")).href);
 const { createInteractiveTuiReference } = await import(pathToFileURL(path.join(modules, "@earendil-works/pi-coding-agent/dist/modes/interactive/tui-renderer.js")).href);
+const { UserMessageComponent } = await import(pathToFileURL(path.join(modules, "@earendil-works/pi-coding-agent/dist/modes/interactive/components/user-message.js")).href);
+const hostTheme = await import(pathToFileURL(path.join(modules, "@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js")).href);
+hostTheme.initTheme("dark");
 const BEGIN = "\x1b[?2026h";
 const END = "\x1b[?2026l";
 const SHOW = "\x1b[?25h";
@@ -52,6 +55,7 @@ function fixture(mode: "regular" | "fullscreen", style: CursorStyle, attached = 
 		host.setFocus(editor);
 	};
 	const ctx = { ui: {
+		theme: hostTheme.theme,
 		notify: (message: string) => warnings.push(message),
 		setEditorComponent(next: typeof factory) {
 			factory = next;
@@ -59,10 +63,11 @@ function fixture(mode: "regular" | "fullscreen", style: CursorStyle, attached = 
 			else { host.removeChild(editor); host.setFocus(null); }
 		},
 	} } as unknown as ExtensionContext;
-	const installed = installEditor({} as ExtensionAPI, ctx, style, undefined, "surround", workline);
+	const installed = installEditor({} as ExtensionAPI, ctx, style, undefined, "surround", workline, { getConfig: () => config, unavailable: () => warnings.push("User layout unavailable") });
 	host.start();
 	return {
 		writes, warnings, terminal, reference, installed, nativeRender, nativeWrite,
+		config,
 		initialOutput: writes.join(""),
 		get host() { return host; }, get editor() { return editor; },
 		tick() { now += 250; },
@@ -285,6 +290,31 @@ for (const style of ["block", "bar", "underline"] as const) {
 		assert.ok(output.lastIndexOf("\x1b[6G") < output.lastIndexOf(END));
 		assert.ok(output.includes("\x1b[6G"));
 		if (style !== "block") assert.ok(output.includes(SHOW) && output.indexOf(SHOW) < output.lastIndexOf(END));
+		assert.deepEqual(f.warnings, []);
+	});
+}
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: User layout and cursor wrappers rebind and clean up together across repeated mode switches`, (t) => {
+		const f = fixture(mode, "bar");
+		t.after(() => f.cleanup());
+		f.config.messageLayout = "compact";
+		const users: Array<{ user: InstanceType<typeof UserMessageComponent>; native: unknown }> = [];
+		for (const next of ["fullscreen", "regular", "fullscreen", "regular"] as const) {
+			const old = f.host;
+			const user = new UserMessageComponent("compatibility user");
+			const native = user.render;
+			users.push({ user, native });
+			f.host.addChild(user); f.installed.requestRender(); f.render(true);
+			assert.notEqual(user.render, native);
+			f.switchMode(next);
+			f.render(true); f.installed.requestRender(); f.render(true);
+			assert.equal(user.render, native, "old User renderer restored");
+			assert.equal(Object.hasOwn(old, "doRender"), false, "no abandoned cursor/User wrapper");
+		}
+		f.installed.cleanup();
+		assert.equal(Object.hasOwn(f.host, "doRender"), false);
+		for (const { user, native } of users) assert.equal(user.render, native);
 		assert.deepEqual(f.warnings, []);
 	});
 }

@@ -18,6 +18,7 @@ This package imports [OldSuns/pi-open-tui](https://github.com/OldSuns/pi-open-tu
 - Thinking-label component-tree adaptation lives in `thinking-label.ts` with cycle protection, message-scoped caching/reset, and a once-per-session warning on unavailable compatibility. The editor owns frame geometry; footer content computes only the requested plain/inline layout and does not collect extension statuses for inline borders.
 - Cursor output adaptation is a local runtime change isolated in `cursor-output.ts`: it resolves Pi's stable TUI reference to the current renderer, installs reversible instance wrappers, preserves bounded output and opaque terminal strings, delays regular-mode sync-end until cursor positioning completes, and deduplicates render-time visibility commands in both modes. It never patches host files, global prototypes or stdout. Block hides the editor's real cursor; bar/underline retain real shapes. Terminal restart and editor invalidation rebind the adapter before mode-switch output, including fullscreen transcript exit without terminal restart. Capability failure warns and falls back to native cursor output; this is not a guarantee for future host implementations.
 - Compact tool presentation is a local addition using Pi 1.1.0's public resolver composition API. `tool-presentation.ts` provides generic coverage for every tool name, including future tools without dedicated renderers; native identity/schema checks select optimizations only. Specialized components remain in the component tree with their mouse/focus/input routing, shared state and native `lastComponent` continuity. The extension owns session-scoped live timing only and preserves available expanded details. Codemode child summaries remain parent-owned metadata, not a raw nested-result archive or additional transcript entries. Older hosts lacking the API keep native presentation with a notice.
+- Compact message layout is an optional local addition (`messageLayout: normal | compact`, default Normal). Tool framing uses public self-shell composition with exact normal-shell padding restoration; rail insets translate mouse coordinates without flattening specialized components. `user-message-layout.ts` is a User-only runtime compatibility bridge: guarded native Markdown structure, exact outer padding removal, unchanged transformers/OSC133 markers, bounded component-tree discovery, native fallback, and reversible instance patches. The editor coordinates its release/rebind with cursor adaptation; no host installation, global prototype, Assistant, execution or transcript changes are made. Native skill-invocation cards remain unchanged.
 
 The imported extension and tests are excluded from Biome formatting, lint, and import organization through a narrowly scoped root override. This intentionally preserves the upstream snapshot rather than introducing a mass rewrite. Package metadata and workspace integration tests remain checked by Biome; imported code is verified by TypeScript and its upstream tests.
 
@@ -71,6 +72,19 @@ Before acceptance, load the freshly built bundle in a live terminal and record h
 3. While output streams, scroll and type Chinese with an IME. Check density, stable scrolling, input/cursor ownership and absence of new flicker. Disable/re-enable tool presentation and Open TUI, navigate branches, start/resume sessions and reload; verify native rendering and cleanup.
 
 This manual checklist remains pending; recorded terminal frames alone are not visual acceptance.
+
+## Compact message layout verification
+
+The actual-host presentation tests cover Normal/Compact transitions, independent tool-content selection, User/Tool outer padding versus the one-line message gap, unchanged Assistant output, native User Markdown/transformers and code whitespace, prompt-zone markers, history/late component discovery, detached-component cleanup, narrow widths, theme changes, opaque image rows and unsupported-host fallback. Both regular and fullscreen mounted layouts are exercised. Specialized default/self renderers retain their mouse/focus/input behavior in both layouts. Cursor integration tests additionally exercise both adapters together across repeated mode switches and cleanup.
+
+Live-terminal visual verification remains pending. Load the freshly built bundle and:
+
+1. Switch Appearance → Message layout between Normal and Compact. Inspect User → Tool → Tool → Assistant and consecutive User messages: rails stop at unpainted message gaps; Assistant receives no label/rail; Normal restores the original view.
+2. Expand tools and codemode; inspect error/diff output, third-party controls and images. Internal paragraphs/code/diff spacing and image controls remain usable. Toggle tool presentation independently from message layout.
+3. Test Chinese/emoji/combining text, narrow resize, light/dark themes and Unicode/ASCII icons. Check font rendering of `▌` and `┃`, selection, scroll stability and IME input.
+4. Switch TUI modes, navigate history/branches, resume, disable/re-enable and reload. User rails must not leak into native or Assistant components, and both User and cursor adapters must clean up.
+
+These automated fixtures establish host integration, not actual terminal/font/IME visual acceptance or support for untested future host versions.
 
 ## Cursor output verification
 
