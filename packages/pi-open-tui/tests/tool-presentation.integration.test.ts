@@ -709,7 +709,8 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		for (const theme of ["dark", "light"] as const) for (const icons of ["unicode", "ascii"] as const) {
 			initTheme(theme); user.invalidate(); f.config.icons.mode = icons;
 			const glyph = icons === "ascii" ? "|" : "┃";
-			const expectedBg = styledRuns(hostTheme.theme.bg("customMessageBg", "x"))[0]!.bg;
+			const expectedFg = styledRuns(hostTheme.theme.fg("userMessageText", glyph))[0]!.fg;
+			const expectedBg = styledRuns(hostTheme.theme.bg("userMessageBg", "x"))[0]!.bg;
 			const lines: string[] = user.render(40);
 			for (const row of [lines[0]!, lines.at(-1)!]) {
 				assert.equal(stripTerminalSequences(row), glyph + " ".repeat(39), "top/bottom padding keeps the rail and a blank colored body");
@@ -722,6 +723,7 @@ for (const mode of ["regular", "fullscreen"] as const) {
 				const runs = styledRuns(line.replace(/\x1b\]133;[ABC]\x07/g, ""));
 				const cells = runs.flatMap((run) => Array.from(run.text, (text) => ({ ...run, text })));
 				assert.equal(cells[0]!.text, glyph);
+				assert.equal(cells[0]!.fg, expectedFg, "rail uses the User message foreground");
 				assert.equal(cells[0]!.bg, "default", "rail is not on the User background");
 				assert.equal(cells[1]!.text, " ");
 				assert.equal(cells[1]!.bg, "default", "outside gap is unpainted");
@@ -729,7 +731,7 @@ for (const mode of ["regular", "fullscreen"] as const) {
 				assert.ok(cells.slice(2).every((cell) => cell.bg === expectedBg), "inner margin and body use the User background");
 				const nativeRuns = styledRuns(sliceByColumn(nativeLines[index]!, 1, 37, true));
 				const nativeCells = nativeRuns.flatMap((run) => Array.from(run.text, (text) => ({ ...run, text })));
-				assert.deepEqual(cells.slice(3).map(({ bg, ...cell }) => cell), nativeCells.map(({ bg, ...cell }) => cell), "native Markdown content, foregrounds and attributes survive recoloring");
+				assert.deepEqual(cells.slice(3), nativeCells, "native Markdown content, backgrounds, foregrounds and attributes survive layout changes");
 			}
 			assert.ok(stripTerminalSequences(lines[1]!).startsWith(`${glyph}  message content`));
 		}

@@ -76,17 +76,13 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 				if (!rendered.length) return [];
 				if (rendered.length < 3) { warn(); return native.call(this, width); }
 				const theme = getTheme();
-				const nativeBackground = theme.getBgAnsi("userMessageBg");
-				const background = theme.getBgAnsi("customMessageBg");
 				const glyph = getConfig().icons.mode === "ascii" ? "|" : "┃";
 				const lines = rendered.map((line) => {
 					if (isImageRow(line)) return line;
-					const prefix = inset ? theme.fg("accent", inset === 2 ? `${glyph} ` : glyph) : "";
-					const nativeContent = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
-					// Recolor the native shell without stripping Markdown foregrounds or attributes.
-					const content = nativeBackground ? nativeContent.replaceAll(nativeBackground, background) : nativeContent;
+					const prefix = inset ? theme.fg("userMessageText", inset === 2 ? `${glyph} ` : glyph) : "";
+					const content = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
 					// The rail/gap are outside the background; only the body owns its left margin.
-					const body = theme.bg("customMessageBg", truncateToWidth(" ".repeat(padding) + content, width - inset, ""));
+					const body = theme.bg("userMessageBg", truncateToWidth(" ".repeat(padding) + content, width - inset, ""));
 					return prefix + body;
 				});
 				// Preserve the native terminal prompt-zone markers on the padded shell.
