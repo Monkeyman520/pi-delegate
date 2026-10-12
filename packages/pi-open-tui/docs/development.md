@@ -81,7 +81,7 @@ Live-terminal visual verification remains pending. Load the freshly built bundle
 
 1. Switch Appearance → Message layout between Normal and Compact. Inspect User → Tool → Tool → Assistant and consecutive User messages: rails stop at unpainted message gaps; Assistant receives no label/rail; Normal restores the original view.
 2. Expand tools and codemode; inspect error/diff output, third-party controls and images. Internal paragraphs/code/diff spacing and image controls remain usable. Toggle tool presentation independently from message layout.
-3. Test Chinese/emoji/combining text, narrow resize, light/dark themes and Unicode/ASCII icons. Check font rendering of `▌` and `┃`, selection, scroll stability and IME input.
+3. Test Chinese/emoji/combining text, narrow resize, light/dark themes and Unicode/ASCII icons. Check that User and Tool use the same `┃` rail (`|` in ASCII mode); the User rail and following one-space gap stay outside its background, with one additional space of left padding inside the background on every row. User content has exactly one blank row above and below, both carrying the rail and the same background as its body; Tool framing stays compact. Check selection, scroll stability and IME input.
 4. Switch TUI modes, navigate history/branches, resume, disable/re-enable and reload. User rails must not leak into native or Assistant components, and both User and cursor adapters must clean up.
 
 These automated fixtures establish host integration, not actual terminal/font/IME visual acceptance or support for untested future host versions.

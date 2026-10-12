@@ -9,7 +9,7 @@ import {
 	DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager, getPackageDir, initTheme, VERSION,
 	type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type ModelRegistry, type ToolInfo, type ToolRenderers, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Markdown, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, sliceByColumn, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { codemodeCalls, selectChildren, ToolPresentation } from "../src/tool-presentation.ts";
 import openTui from "../src/index.ts";
@@ -698,6 +698,42 @@ for (const mode of ["regular", "fullscreen"] as const) {
 			}
 		}
 	});
+	test(`${mode}: compact User rail and gap stay outside the background with one inner margin on every row`, async (t) => {
+		const f = await fixture(t, mode);
+		f.config.messageLayout = "compact";
+		const user = new UserMessageComponent("message content ".repeat(12) + "\n\n**bold** and `inline` and [link](https://example.com)\n\n```text\n  indented\n```\n\nfinal");
+		if (f.tui instanceof TuiAltScreen) f.tui.setLayoutRoot(new VStack([user]));
+		else f.tui.addChild(user);
+		const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => assert.fail("unexpected fallback"));
+		t.after(() => { adapter.cleanup(); initTheme("dark"); });
+		for (const theme of ["dark", "light"] as const) for (const icons of ["unicode", "ascii"] as const) {
+			initTheme(theme); user.invalidate(); f.config.icons.mode = icons;
+			const glyph = icons === "ascii" ? "|" : "┃";
+			const expectedBg = styledRuns(hostTheme.theme.bg("customMessageBg", "x"))[0]!.bg;
+			const lines: string[] = user.render(40);
+			for (const row of [lines[0]!, lines.at(-1)!]) {
+				assert.equal(stripTerminalSequences(row), glyph + " ".repeat(39), "top/bottom padding keeps the rail and a blank colored body");
+			}
+			assert.ok(lines.length > 3, "includes wrapping and a paragraph gap");
+			assert.ok(lines.every((line) => visibleWidth(line) === 40), "background retains full body width");
+			const nativeLines: string[] = UserMessageComponent.prototype.render.call(user, 39).map((line: string) => line.replace(/\x1b\]133;[ABC]\x07/g, ""));
+			assert.equal(lines.length, nativeLines.length, "keeps exactly the native one-row top/bottom padding");
+			for (const [index, line] of lines.entries()) {
+				const runs = styledRuns(line.replace(/\x1b\]133;[ABC]\x07/g, ""));
+				const cells = runs.flatMap((run) => Array.from(run.text, (text) => ({ ...run, text })));
+				assert.equal(cells[0]!.text, glyph);
+				assert.equal(cells[0]!.bg, "default", "rail is not on the User background");
+				assert.equal(cells[1]!.text, " ");
+				assert.equal(cells[1]!.bg, "default", "outside gap is unpainted");
+				assert.equal(cells[2]!.text, " ", "one inner left margin");
+				assert.ok(cells.slice(2).every((cell) => cell.bg === expectedBg), "inner margin and body use the User background");
+				const nativeRuns = styledRuns(sliceByColumn(nativeLines[index]!, 1, 37, true));
+				const nativeCells = nativeRuns.flatMap((run) => Array.from(run.text, (text) => ({ ...run, text })));
+				assert.deepEqual(cells.slice(3).map(({ bg, ...cell }) => cell), nativeCells.map(({ bg, ...cell }) => cell), "native Markdown content, foregrounds and attributes survive recoloring");
+			}
+			assert.ok(stripTerminalSequences(lines[1]!).startsWith(`${glyph}  message content`));
+		}
+	});
 	test(`${mode}: compact User/Tool layout retains one message gap and leaves Assistant byte-for-byte unchanged`, async (t) => {
 		const f = await fixture(t, mode);
 		f.config.icons.mode = "unicode";
@@ -727,10 +763,10 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		adapter.refresh();
 		const compactUser: string[] = user.render(80);
 		const plainUser = compactUser.map(stripTerminalSequences);
-		assert.match(plainUser[0]!, /^▌ 用户请求/);
-		assert.match(plainUser.at(-1)!, /^▌ 第二段/);
+		assert.match(plainUser[1]!, /^┃  用户请求/);
+		assert.match(plainUser.at(-2)!, /^┃  第二段/);
 		assert.doesNotMatch(plainUser.join("\n"), /YOU/);
-		assert.ok(plainUser.some((line) => /^▌ +$/.test(line)), "paragraph blank remains inside the rail");
+		assert.ok(plainUser.some((line) => /^┃ +$/.test(line)), "paragraph blank remains inside the rail");
 		assert.ok(compactUser[0]!.startsWith("\x1b]133;A\x07"));
 		assert.ok(compactUser.at(-1)!.includes("\x1b]133;B\x07\x1b]133;C\x07"));
 		const compactTool = first.render(80).map(stripTerminalSequences);
@@ -782,12 +818,12 @@ test("User adaptation preserves native Markdown transforms, code whitespace, the
 		initTheme(theme); user.invalidate();
 		const lines: string[] = user.render(80);
 		assert.match(stripTerminalSequences(lines.join("\n")), /after/);
-		assert.ok(widths.includes(78), "transform gets actual body width, not full terminal width");
+		assert.ok(widths.includes(77), "transform gets actual body width, not full terminal width");
 		assert.ok(lines.every((line) => visibleWidth(line) <= 80));
 		assert.equal(user.children, originalChildren, "keeps real native Markdown");
-		const raw: string[] = nativeRender.call(user, 82);
-		const expectedBody = raw.slice(1, -1).map((line: string) => stripTerminalSequences(line).slice(2, 80));
-		const actualBody = lines.map((line) => stripTerminalSequences(line).slice(2));
+		const raw: string[] = nativeRender.call(user, 81);
+		const expectedBody = raw.slice(1, -1).map((line: string) => stripTerminalSequences(line).slice(2, 79));
+		const actualBody = lines.slice(1, -1).map((line) => stripTerminalSequences(line).slice(3));
 		assert.deepEqual(actualBody, expectedBody, "retain code and interior blank rows exactly");
 	}
 	user.setOutputPad(0); assert.match(stripTerminalSequences(user.render(80).join("\n")), /after/);
@@ -809,7 +845,7 @@ test("User adaptation discovers streamed/history components, releases detached u
 	f.tui.addChild(user);
 	f.tui.start(); f.tui.renderNow(true);
 	assert.notEqual(user.render, native, "discovered before a real host frame");
-	assert.match(stripTerminalSequences(f.writes()), /\| late history/);
+	assert.match(stripTerminalSequences(f.writes()), /\|  late history/);
 	assert.doesNotMatch(stripTerminalSequences(f.writes()), /YOU/);
 	f.tui.removeChild(user); adapter.refresh();
 	assert.equal(user.render, native, "detached history does not stay retained/patched");

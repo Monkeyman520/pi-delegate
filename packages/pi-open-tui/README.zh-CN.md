@@ -132,7 +132,7 @@ pi install /absolute/path/to/checkout/packages/pi-open-tui
 | `toolPresentation` | `true`、`false` | 常规 → 紧凑工具展示；默认开启，关闭后使用原生工具内容；消息布局独立控制外壳 |
 | `cursorStyle` | `block`、`bar`、`underline` | `bar` 和 `underline` 需要终端支持光标形状转义序列 |
 | `editorBorderStyle` | `surround`、`minimal` | 外观 → 编辑器边框；默认「环绕」。「简洁」仅保留上下横线，文字左右留白不变。切换即时生效并保存，仍支持工作状态和内联底栏 |
-| `messageLayout` | `normal`、`compact` | 外观 → 消息布局；默认「常规」。「紧凑」为 User／Tool 添加左侧竖线、去掉块内上下额外留白，保留消息间空行，Assistant 输出不变 |
+| `messageLayout` | `normal`、`compact` | 外观 → 消息布局；默认「常规」。「紧凑」为 User／Tool 添加左侧竖线，User 正文上下各留一行带竖线和背景色的留白，Tool 去掉块内上下额外留白，保留消息间空行，Assistant 输出不变 |
 | `workline.marquee` | 布尔开关 | 外观 → Workline 跑马灯；默认开启。工作文字上有高亮扫光，不横向滚动文字。关闭后状态和耗时仍更新，Pi 原生旋转指示器不受影响 |
 | `workline.attachToBorder` | 布尔开关 | 外观 → Workline 贴合边框；默认开启。关闭后在编辑器上方独占一行，可见 Workline 上下各留一行空白，绝不移入 footer |
 | `icons.mode` | `auto`、`nerd`、`unicode`、`ascii` | 控制底栏、Workline、工具展示和遥测通知使用的图标 |
@@ -166,9 +166,9 @@ Nerd Font 模式同样使用四种不同图标。`done` 只表示宿主正常完
 
 ## 紧凑消息布局
 
-在 `/open-tui` 中选择**外观 → 消息布局 → 紧凑**，或设置 `"messageLayout": "compact"`。默认仍为「常规」。User 消息使用粗竖线 `▌`，竖线后留一个空格直接显示正文，不显示 `YOU`，也不预留标签宽度；Tool 调用和结果使用 `┃`，竖线复用当前状态的主题颜色：等待／运行中使用 `warning`，成功使用 `success`，失败使用 `error`，保留现有名称、状态及详情。ASCII 图标模式使用 `|`。Assistant 保持原生输出，不加 `PI`、竖线或新排版。
+在 `/open-tui` 中选择**外观 → 消息布局 → 紧凑**，或设置 `"messageLayout": "compact"`。默认仍为「常规」。User 消息使用与 Tool 相同的竖线 `┃`，竖线后先留一个不染背景色的空格，再显示取自当前主题 `customMessageBg` 的背景色区域（内置深色／浅色主题中为紫色系）；背景内部、正文之前再留一个空格作为左内边距，不显示 `YOU`，也不预留标签宽度；Tool 调用和结果使用 `┃`，竖线复用当前状态的主题颜色：等待／运行中使用 `warning`，成功使用 `success`，失败使用 `error`，保留现有名称、状态及详情。ASCII 图标模式使用 `|`。Assistant 保持原生输出，不加 `PI`、竖线或新排版。
 
-紧凑模式只去掉普通 User／Tool 外壳的上下额外留白，不删除 Markdown 段落、代码／diff 内部的空行，也不压掉图片间距。消息之间保留宿主提供的空白行，空白处不画竖线。Codemode 子调用仍属于父消息，不合并无关消息。第三方工具正文、控件、图片协议和详情展开继续可用，其自身内部留白可能保留。
+紧凑模式在 User 正文上下各保留一行空白 padding，两行均绘制竖线并使用与正文相同的 `customMessageBg` 背景色；普通 Tool 外壳仍去掉上下额外留白，不删除 Markdown 段落、代码／diff 内部的空行，也不压掉图片间距。消息之间保留宿主提供的空白行，空白处不画竖线。Codemode 子调用仍属于父消息，不合并无关消息。第三方工具正文、控件、图片协议和详情展开继续可用，其自身内部留白可能保留。
 
 消息布局与**常规 → 紧凑工具展示**独立：关闭工具展示会恢复原生工具内容，但所选消息布局仍控制外壳；同时切回「常规」布局即可恢复原有工具外壳。总「启用」开关关闭两项增强。设置即时生效，沿用现有保存及失败反馈。
 

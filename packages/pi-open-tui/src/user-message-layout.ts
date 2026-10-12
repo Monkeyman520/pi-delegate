@@ -68,21 +68,28 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 			try {
 				if (width <= 0) return [];
 				const inset = Math.min(2, width - 1);
-				const inner = Math.max(1, width - inset);
-				// Keep the native Markdown and its transformers/styles. Remove exactly
-				// its known one-line outer padding and configured horizontal margins.
+				const padding = Math.min(1, width - inset - 1);
+				const inner = Math.max(1, width - inset - padding);
+				// Keep native Markdown, transformers and one-line vertical padding.
+				// Replace only its configured horizontal margins with our rail/body inset.
 				const rendered = child.render(inner + this.outputPad * 2);
 				if (!rendered.length) return [];
 				if (rendered.length < 3) { warn(); return native.call(this, width); }
 				const theme = getTheme();
-				const glyph = getConfig().icons.mode === "ascii" ? "|" : "▌";
-				const lines = rendered.slice(1, -1).map((line) => {
+				const nativeBackground = theme.getBgAnsi("userMessageBg");
+				const background = theme.getBgAnsi("customMessageBg");
+				const glyph = getConfig().icons.mode === "ascii" ? "|" : "┃";
+				const lines = rendered.map((line) => {
 					if (isImageRow(line)) return line;
-					const prefix = inset ? theme.fg("accent", theme.bold(inset === 2 ? `${glyph} ` : glyph)) : "";
-					const content = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
-					return theme.bg("userMessageBg", truncateToWidth(prefix + content, width, ""));
+					const prefix = inset ? theme.fg("accent", inset === 2 ? `${glyph} ` : glyph) : "";
+					const nativeContent = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
+					// Recolor the native shell without stripping Markdown foregrounds or attributes.
+					const content = nativeBackground ? nativeContent.replaceAll(nativeBackground, background) : nativeContent;
+					// The rail/gap are outside the background; only the body owns its left margin.
+					const body = theme.bg("customMessageBg", truncateToWidth(" ".repeat(padding) + content, width - inset, ""));
+					return prefix + body;
 				});
-				// Preserve the native terminal prompt-zone markers after removing padding.
+				// Preserve the native terminal prompt-zone markers on the padded shell.
 				lines[0] = ZONE_START + lines[0];
 				lines[lines.length - 1] = ZONE_END + lines[lines.length - 1];
 				return lines;
