@@ -74,6 +74,7 @@ function fixture(t: TestContext, options: { peek?: boolean; project?: boolean } 
 	} as unknown as ExtensionContext;
 	const pi = {
 		on(name: string, handler: (event: any, ctx: ExtensionContext) => unknown) { handlers.set(name, [...(handlers.get(name) ?? []), handler]); },
+		registerToolRenderer() {},
 		registerCommand(_name: string, options: { handler: typeof command }) { command = options.handler; },
 		getThinkingLevel: () => "off",
 	} as unknown as ExtensionAPI;

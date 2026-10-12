@@ -1,6 +1,7 @@
 # Import upstream pi-open-tui as an independent extension
 
 **Status:** Accepted
+**Development SDK pin superseded by:** [ADR 0018](./0018-public-host-tool-renderer-composition.md) (2026-10-12), only the Pi SDK development pin to 1.0.0; all other decisions in this record remain in force.
 
 ## Context
 

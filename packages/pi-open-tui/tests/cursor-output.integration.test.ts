@@ -30,7 +30,7 @@ function fixture(mode: "regular" | "fullscreen", style: CursorStyle, attached = 
 		write: (data: string) => writes.push(data),
 		showCursor: () => writes.push(SHOW), hideCursor: () => writes.push(HIDE),
 		moveBy: (n: number) => writes.push(n > 0 ? `\x1b[${n}B` : `\x1b[${-n}A`),
-		clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {},
+		clearLine() {}, clearFromCursor() {}, clearScreen() {}, setTitle() {}, setProgress() {}, setProgramStatus() {},
 	} as Terminal;
 	let host: TUI = mode === "regular" ? new TuiMainScreen(terminal, preference) : new TuiAltScreen(terminal, preference);
 	const reference: TUI = createInteractiveTuiReference(() => host);

@@ -63,6 +63,7 @@ for (const attached of [true, false]) {
 			on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown) {
 				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 			},
+			registerToolRenderer() {},
 			registerCommand() {}, getThinkingLevel: () => "off",
 		} as unknown as ExtensionAPI;
 		const emit = async (event: ExtensionEvent) => {
@@ -97,12 +98,12 @@ for (const attached of [true, false]) {
 				if (outcome) await emit(boundary(outcome));
 				assert.doesNotMatch(line(), /done|interrupted|failed|ended/);
 				now = 4_000;
-				await emit({ type: "agent_settled" });
+				await emit({ type: "agent_settled", aborted: false });
 				assert.ok(line().includes(`${resolveGlyphs("ascii")[glyph]} ${label} 3s`));
 				const result = render();
 				assert.equal(result.length, idle.length + (attached ? 0 : 3));
 				now = 9_000;
-				await emit({ type: "agent_settled" });
+				await emit({ type: "agent_settled", aborted: false });
 				assert.deepEqual(render(), result, "retained results do not keep counting");
 			}
 
@@ -126,19 +127,19 @@ for (const attached of [true, false]) {
 			await emit({ type: "agent_start" });
 			await emit({ type: "agent_end", messages: [] });
 			now = 15_000;
-			await emit({ type: "agent_settled" });
+			await emit({ type: "agent_settled", aborted: false });
 			assert.ok(line().includes("- ended 5s"), "no previous success is reused by an empty continuation");
 
 			for (const reason of ["reload", "new", "resume", "fork"] as const) {
 				await emit({ type: "session_start", reason });
 				assert.deepEqual(render(), idle);
 				await emit({ type: "message_end", message: assistant("aborted") });
-				await emit({ type: "agent_settled" });
+				await emit({ type: "agent_settled", aborted: false });
 				assert.deepEqual(render(), idle, "replay and late settlement cannot publish a result");
 				await emit({ type: "agent_start" });
 				await finishLoop("stop");
 				await emit(boundary("completed"));
-				await emit({ type: "agent_settled" });
+				await emit({ type: "agent_settled", aborted: false });
 				assert.ok(line().includes("done"));
 			}
 			await emit({ type: "session_tree", newLeafId: "new-leaf", oldLeafId: "old-leaf" });
@@ -147,7 +148,7 @@ for (const attached of [true, false]) {
 			await finishLoop("error");
 			await emit(boundary("error"));
 			await emit({ type: "session_tree", newLeafId: "other-leaf", oldLeafId: "new-leaf" });
-			await emit({ type: "agent_settled" });
+			await emit({ type: "agent_settled", aborted: false });
 			assert.deepEqual(render(), idle);
 			await new Promise((resolve) => setTimeout(resolve, 300));
 			const stoppedRequests = renderRequests;
@@ -156,7 +157,7 @@ for (const attached of [true, false]) {
 			await emit({ type: "session_shutdown", reason: "quit" });
 			await emit({ type: "agent_start" });
 			await emit(boundary("error"));
-			await emit({ type: "agent_settled" });
+			await emit({ type: "agent_settled", aborted: false });
 			assert.equal(notifications.length, 0);
 		} finally {
 			await emit({ type: "session_shutdown", reason: "quit" });

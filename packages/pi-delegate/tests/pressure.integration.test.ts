@@ -143,7 +143,7 @@ async function withHost(
 		expect(
 			JSON.parse(readFileSync(join(getPackageDir(), "package.json"), "utf8"))
 				.version,
-		).toBe("1.0.0");
+		).toBe("1.1.0");
 		await parent.request("get_state");
 		await action(host);
 	} finally {

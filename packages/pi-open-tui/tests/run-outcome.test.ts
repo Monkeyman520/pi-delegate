@@ -23,7 +23,7 @@ function fixture() {
 		start: () => tracker.handle({ type: "agent_start" }),
 		end: (reason?: AssistantMessage["stopReason"]) => tracker.handle({ type: "agent_end", messages: reason ? [assistant(reason)] : [] }),
 		boundary: (outcome: AgentBeforeSettleEvent["outcome"]) => tracker.handle({ type: "agent_before_settle", outcome } as AgentBeforeSettleEvent),
-		settle: () => tracker.handle({ type: "agent_settled" }),
+		settle: () => tracker.handle({ type: "agent_settled", aborted: false }),
 	};
 }
 

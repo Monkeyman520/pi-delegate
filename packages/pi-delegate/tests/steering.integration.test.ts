@@ -11,7 +11,7 @@ const turnPressure = {
 };
 
 for (const mode of ["all", "one-at-a-time"] as const) {
-	test(`real Pi 1.0.0 steering: queued/handled/transformed slash text, provider/tool boundary and ${mode} mode`, async () => {
+	test(`real Pi 1.1.0 steering: queued/handled/transformed slash text, provider/tool boundary and ${mode} mode`, async () => {
 		await withSteeringHost(
 			async (host) => {
 				const id = await host.start({

@@ -93,7 +93,7 @@ export class RunOutcomeTracker {
 				break;
 			case "agent_settled":
 				this.state.lastRun = {
-					outcome: this.classify(),
+					outcome: event.aborted === true ? "interrupted" : this.classify(),
 					elapsedMs: Math.max(0, this.now() - this.state.workingSince),
 				};
 				this.state.workingSince = undefined;
@@ -104,7 +104,7 @@ export class RunOutcomeTracker {
 
 	private classify(): RunOutcome {
 		if (this.signal?.aborted || this.stopReason === "aborted") return "interrupted";
-		// In Pi 1.0.0, length maps to a completed activity but is not a proven completion.
+		// A length-limited response is not a proven completion, even at settlement.
 		if (this.stopReason === "length") return "ended";
 		if (this.pendingOutcome === "error" && this.stopReason === "error") return "failed";
 		if (this.pendingOutcome === "completed" && (this.stopReason === "stop" || this.stopReason === "toolUse")) return "completed";

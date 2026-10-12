@@ -19,7 +19,7 @@ pi-delegate 是一个 Pi TypeScript 扩展，通过 RPC 启动一次性子 agent
 
 - 本地安装需要 Git 和 Bun 1.4.1 或更高版本。
 - Node.js 22.19 或更高版本。Pi 在 Bun 下运行时，子进程需要能从 `PATH` 找到 `node`。
-- 兼容的 Pi 宿主。本扩展已在 `@earendil-works/pi-coding-agent@1.0.0` 上验证；其他宿主版本尚未验证。
+- 兼容的 Pi 宿主。本扩展已在 `@earendil-works/pi-coding-agent@1.1.0` 上验证；其他宿主版本尚未验证。
 
 ## 安装
 

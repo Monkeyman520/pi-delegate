@@ -238,7 +238,7 @@ export async function withSteeringHost(
 	);
 	const host = new SteeringHost(parent, logs);
 	try {
-		expect(VERSION).toBe("1.0.0");
+		expect(VERSION).toBe("1.1.0");
 		await parent.request("get_state");
 		const commands = await parent.request<{ commands: { name: string }[] }>(
 			"get_commands",

@@ -19,7 +19,7 @@ pi-delegate is a TypeScript extension for Pi. It launches one-off subagents over
 
 - Git and Bun 1.4.1 or later for local setup.
 - Node.js 22.19 or later. When Pi runs under Bun, `node` must be available on `PATH` for child processes.
-- A compatible Pi host. This extension is validated with `@earendil-works/pi-coding-agent@1.0.0`; other host versions are not currently verified.
+- A compatible Pi host. This extension is validated with `@earendil-works/pi-coding-agent@1.1.0`; other host versions are not currently verified.
 
 ## Installation
 

@@ -14,7 +14,7 @@ import {
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 
-/** Real Pi 1.0.0 widget adapter methods and TUI renderer, with an in-memory terminal transport.
+/** Real Pi 1.1.0 widget adapter methods and TUI renderer, with an in-memory terminal transport.
  * Not a full InteractiveMode startup, keyboard/input or manual visual E2E test.
  */
 export async function statusUI() {
@@ -48,6 +48,7 @@ export async function statusUI() {
 		clearScreen() {},
 		setTitle() {},
 		setProgress() {},
+		setProgramStatus() {},
 	};
 	const tui = new TuiMainScreen(terminal);
 	let themeChanges = 0;

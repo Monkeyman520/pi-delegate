@@ -29,6 +29,7 @@ const COPY = {
 			enabled: "Enabled",
 			inlineFooter: "Inline footer",
 			thinkingPeek: "Thinking peek",
+			toolPresentation: "Compact tool presentation",
 			language: "Language",
 			cursorStyle: "Cursor style",
 			editorBorderStyle: "Editor border",
@@ -70,6 +71,7 @@ const COPY = {
 			enabled: "启用",
 			inlineFooter: "内联底栏",
 			thinkingPeek: "思考预览",
+			toolPresentation: "紧凑工具展示",
 			language: "语言",
 			cursorStyle: "光标样式",
 			editorBorderStyle: "编辑器边框",
@@ -166,6 +168,7 @@ function buildFeaturesItems(config: OpenTuiConfig, copy: SettingsCopy): SettingI
 		{ id: "settingsLanguage", label: copy.labels.language, currentValue: copy.values.languages[config.settingsLanguage] },
 		{ id: "thinkingPeek", label: copy.labels.thinkingPeek, currentValue: formatThinkingPeekLines(config.thinkingPeek.lines, copy) },
 		{ id: "inlineFooter", label: copy.labels.inlineFooter, currentValue: flag(config.inlineFooter) },
+		{ id: "toolPresentation", label: copy.labels.toolPresentation, currentValue: flag(config.toolPresentation) },
 	];
 }
 
@@ -233,6 +236,7 @@ function handleSettingChange(
 		if (itemId === "inlineFooter") return { ...config, inlineFooter: !config.inlineFooter };
 		if (itemId === "settingsLanguage") return toggleLanguage(config);
 		if (itemId === "thinkingPeek") return cycleThinkingPeek(config);
+		if (itemId === "toolPresentation") return { ...config, toolPresentation: !config.toolPresentation };
 	}
 	if (tab === "icons") {
 		if (itemId === "mode") return cycleIconMode(config);

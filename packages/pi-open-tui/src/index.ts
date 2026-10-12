@@ -16,6 +16,7 @@ import {
 	invalidateUsageCache,
 	type FooterState,
 } from "./state.ts";
+import { ToolPresentation } from "./tool-presentation.ts";
 import { resolveGlyphs } from "./icons.ts";
 import {
 	buildPeekLabel,
@@ -52,6 +53,15 @@ export default function (pi: ExtensionAPI) {
 	let worklineTelemetry: TurnTelemetry | undefined;
 
 	let config: OpenTuiConfig = structuredClone(DEFAULT_CONFIG);
+	const toolPresentation = new ToolPresentation(() => config, pi);
+	let toolPresentationWarningShown = false;
+	const notifyToolPresentationCapability = (ctx: ExtensionContext) => {
+		if (!isTuiContext(ctx) || !config.enabled || !config.toolPresentation || toolPresentation.available || toolPresentationWarningShown) return;
+		toolPresentationWarningShown = true;
+		ctx.ui.notify(config.settingsLanguage === "zh"
+			? "open-tui：紧凑工具展示需要 Pi 1.1.0 的公开渲染 API；保留原生展示"
+			: "open-tui: compact tool presentation requires the Pi 1.1.0 public renderer API; retaining native presentation", "warning");
+	};
 	let active = false;
 	let lastCtx: ExtensionContext | undefined;
 	let requestFooterRender: (() => void) | undefined;
@@ -250,6 +260,9 @@ export default function (pi: ExtensionAPI) {
 		invalidateUsageCache();
 
 		config = loadConfig((msg, level) => ctx.ui.notify(msg, level));
+		toolPresentation.startSession(isTuiContext(ctx));
+		toolPresentationWarningShown = false;
+		notifyToolPresentationCapability(ctx);
 		clearPeekLabel(ctx);
 
 		applyUi(ctx);
@@ -259,6 +272,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		sessionLifecycle.shutdown();
+		toolPresentation.shutdown();
 		gitRefresh.invalidate();
 		runtimeRefresh.invalidate();
 		stopWorkingTimer();
@@ -339,6 +353,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("tool_execution_start", (event) => {
 		turnTelemetry.handle(event);
+		if (sessionLifecycle.isCurrent()) toolPresentation.start(event.toolCallId, event.parentToolCallId);
 	});
 
 	pi.on("turn_end", (event, ctx) => {
@@ -398,6 +413,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_execution_end", (_event, ctx) => {
+		toolPresentation.end(_event.toolCallId);
 		refreshInteractiveState(ctx, true);
 	});
 
@@ -410,6 +426,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_tree", (_event, ctx) => {
 		if (!sessionLifecycle.isCurrent()) return;
 		stopWorkingTimer();
+		toolPresentation.reset();
 		runOutcome.reset();
 		turnTelemetry.reset();
 		worklineTelemetry = undefined;
@@ -450,6 +467,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (lastCtx) {
 				pendingUiChange = getPendingUiChange(newConfig.enabled, active);
+				notifyToolPresentationCapability(lastCtx);
 			}
 			if (lastCtx) refreshInteractiveState(lastCtx, true);
 			requestFooterRender?.();

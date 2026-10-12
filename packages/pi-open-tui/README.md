@@ -12,11 +12,12 @@ A polished terminal interface for the [Pi](https://pi.dev) coding agent. It brin
 - **Project awareness** for 50+ runtimes and detailed Git states, including ahead/behind, staged, modified, untracked, stashed, and detached HEAD
 - **Turn telemetry** for TPS, time to first token (TTFT), duration, stalls, tokens, and list-price rate
 - **Thinking peek**: an inline ticker replaces Pi's hidden `Thinking...` label with the tail of the model's reasoning while it works
+- **Compact tools and codemode activity** with expandable native details, reliable statuses and observed child-call progress
 - **Interactive settings** through `/open-tui`, available in English and Simplified Chinese
 
 ## Requirements
 
-- Pi 1.0 or later
+- Pi 1.0 or later; compact tool presentation needs Pi 1.1.0's public renderer API. Older hosts retain native tools with a capability notice
 - A terminal with UTF-8 and color support
 - A [Nerd Font](https://www.nerdfonts.com/font-downloads) for the full icon set (optional; portable Unicode icons are built in)
 
@@ -77,6 +78,7 @@ Run `/open-tui` to open the settings dialog. It provides **General**, **Appearan
 {
   "enabled": true,
   "inlineFooter": false,
+  "toolPresentation": true,
   "settingsLanguage": "en",
   "cursorStyle": "block",
   "editorBorderStyle": "surround",
@@ -124,11 +126,12 @@ Key options:
 | --- | --- | --- |
 | `settingsLanguage` | `en`, `zh` | Changes the `/open-tui` interface language |
 | `inlineFooter` | `true`, `false` | Moves the two main Footer rows into the editor's top and bottom borders; defaults to `false`. Extension status rows remain below the editor |
+| `toolPresentation` | `true`, `false` | General → Compact tool presentation; defaults to `true`. Disable for native tool rendering |
 | `cursorStyle` | `block`, `bar`, `underline` | `bar` and `underline` require terminal cursor-shape support |
 | `editorBorderStyle` | `surround`, `minimal` | Appearance → Editor border; Surround is the default. Minimal keeps only horizontal borders with unchanged text inset. Changes apply immediately and are saved; working status and inline footer remain supported |
 | `workline.marquee` | Boolean | Appearance → Workline marquee; defaults to `true`. Sweeps a highlight across the working message without scrolling it. Turning it off keeps status/time updates and Pi's native spinner |
 | `workline.attachToBorder` | Boolean | Appearance → Workline attached to border; defaults to `true`. Set to `false` for a row above the editor with one blank row above and below the visible Workline; never moves Workline into the footer |
-| `icons.mode` | `auto`, `nerd`, `unicode`, `ascii` | Controls footer, Workline and telemetry icons |
+| `icons.mode` | `auto`, `nerd`, `unicode`, `ascii` | Controls footer, Workline, tool presentation and telemetry icons |
 | `footerSegments` | Boolean flags | Shows or hides individual footer data |
 | `footerSegments.capitalizeProviderName` | Boolean | Capitalizes the first character of the provider name in the footer; set it to `false` to keep the provider's original casing |
 | `telemetry` | Boolean flags | Enables telemetry and its individual measurements |
@@ -153,9 +156,21 @@ The single **Workline** merges Pi's editor working message with elapsed run time
 | Observed failure | `failed` | `✗` / `x` | Error |
 | Insufficient outcome evidence | `ended` | `•` / `-` | Muted |
 
-Nerd Font mode also uses four distinct glyphs. `done` describes normal host completion, not proof that the user's task succeeded. A failed tool call alone does not make the run failed. Unresolved length-truncated responses and recovery cancellations without decisive evidence show neutral `ended`. Pi 1.0.0 does not attach an outcome to settlement: results reflect current-run public lifecycle evidence, not exhaustive final-cause diagnosis. In particular, cancellation by another extension during a post-loop `agent_before_settle` handler can be indistinguishable from normal completion or failure.
+Nerd Font mode also uses four distinct glyphs. `done` describes normal host completion, not proof that the user's task succeeded. A failed tool call alone does not make the run failed. Unresolved length-truncated responses and recovery cancellations without decisive evidence show neutral `ended`. Pi 1.1.0's public `agent_settled.aborted` flag also identifies retry or post-loop before-settle cancellation as `interrupted`; older hosts without that flag retain the earlier lifecycle-evidence limitation. This is not exhaustive final-cause diagnosis.
 
 The footer no longer shows a second working/result timer, regardless of `inlineFooter`. Both Workline switches apply immediately and are saved. Native retry/compaction status messages keep their own meaning, styling and display priority; narrow borders may compact or truncate the Workline to fit.
+
+## Tool presentation
+
+On Pi 1.1.0, every tool call receives unified status/name/argument summaries, a small actual-output/error preview and measured elapsed time when available: native tools, editing/search extensions, delegate tools, computer-use, MCP and other extensions. Newly encountered tools do not need a styling allowlist entry or dedicated renderer. Verified native contracts add target/command summaries and edit diff previews; unknown schemas use bounded generic argument summaries instead of guessing semantics from a familiar name. Status follows host error evidence, not words such as “error” in output. Historical calls without timing do not acquire a synthetic duration. Expand with Pi's normal tool-expansion shortcut (shown on the card) for available arguments/results; images and their show/hide control, host truncation notices and saved full-output paths remain accessible.
+
+Specialized third-party call/result components remain usable alongside the unified summary, including their own compact view, controls, images, interactions and important metadata. They are composed as actual components rather than flattened into text or silently cut to the generic preview budget; their native compact bodies may therefore occupy additional space. Expansion also exposes complete available generic arguments and returned text, so a specialized renderer that only shows metadata cannot hide the rest of the generic preview.
+
+Codemode stays one parent card. Unified child rows cover all **observed** tool names, including unfamiliar/extension/MCP calls. Its compact view emphasizes observed activity: running/error/cancelled records have priority, selected rows retain call order, and hidden-status counts point to expansion. Counts are not a completion percentage or a prediction of final work. Parent timing is script wall time, never a sum of concurrent child durations. A successful script can contain failed/cancelled children; neither those children nor script success alone determine the Workline's Agent-run outcome. Actual script output remains previewed, and available model-call identity, status and cost remain visible in child records.
+
+Expansion shows the complete available script and parent content plus host-provided child records. **Child arguments/errors are host summaries and may already be truncated; raw child results are not additionally retained.** If a script reads files but returns only a count, expansion cannot recover those files. Parent images, host truncation and full-output file access retain the normal host behavior; expansion cannot restore content omitted by the host.
+
+Disable **General → Compact tool presentation** (`toolPresentation: false`) to return to native rendering; the overall Enabled switch also disables this enhancement. Older hosts without the public renderer API keep native tools and warn that enhanced presentation is unavailable. This changes presentation only, not execution, permissions, transcripts or model-facing results. Live-terminal density, scrolling, images and IME behavior still require the [interactive checklist](docs/development.md#tool-presentation-verification).
 
 ## Cursor rendering
 
@@ -163,7 +178,7 @@ The footer no longer shows a second working/result timer, regardless of `inlineF
 
 Open TUI installs a reversible, instance-scoped runtime compatibility adapter. It deduplicates cursor visibility commands during renders and, in regular mode, ends synchronized output only after final cursor positioning. It does not modify Pi source/installed files or globally intercept stdout. Disabling/reloading the extension restores its method adaptations and the captured hardware-cursor preference. If the host seam is unavailable, it warns and retains native output rather than claiming flicker prevention.
 
-Recorded-output integration tests cover Pi TUI 1.0.0 and the inspected installed 1.0.4. The adapter uses a non-public rendering method, so future hosts need verification. Actual visual results depend on terminal/tmux synchronized-output support; real terminal flicker and Chinese IME placement still require interactive verification. See the [cursor smoke checklist](docs/development.md#cursor-output-verification).
+Recorded-output integration tests now cover the pinned Pi TUI 1.1.0 (earlier evidence covered 1.0.0 and the inspected installed 1.0.4). The adapter uses a non-public rendering method, so future hosts need verification. Actual visual results depend on terminal/tmux synchronized-output support; real terminal flicker and Chinese IME placement still require interactive verification. See the [cursor smoke checklist](docs/development.md#cursor-output-verification).
 
 ## Turn telemetry
 

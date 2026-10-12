@@ -155,7 +155,7 @@ Tools and environment inherited by a child may carry substantial authority. Excl
 
 ## Compatibility and verification
 
-The implementation is validated with Pi 1.0.0. That evidence does not establish compatibility with every Pi version.
+The implementation is validated with Pi 1.1.0. That evidence does not establish compatibility with every Pi version.
 
 Tests exercise real Pi RPC processes, inheritance and MCP reconstruction, lifecycle boundaries, and deterministic local model providers. Task-center component and native custom-overlay/focus integration are covered, but real regular/fullscreen terminal rendering, keyboard/picker E2E and IME operation are not claimed. Tests requiring external model credentials are not part of the current verification.
 

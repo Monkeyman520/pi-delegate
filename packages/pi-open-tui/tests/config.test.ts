@@ -54,6 +54,7 @@ test("valid settings and unknown legacy fields survive load/save", (t) => {
 	const config = structuredClone(DEFAULT_CONFIG);
 	config.enabled = false;
 	config.icons.mode = "unicode";
+	config.toolPresentation = false;
 	config.footerSegments.cwd = false;
 	config.telemetry.tps = false;
 	config.thinkingPeek.lines = 2;

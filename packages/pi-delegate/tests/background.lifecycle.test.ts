@@ -179,7 +179,7 @@ async function withRuntime(
 			s.bindExtensions({ mode: "tui", onError: (e) => errors.push(e.error) });
 		runtime.setRebindSession(bind);
 		await bind(runtime.session);
-		expect(VERSION).toBe("1.0.0");
+		expect(VERSION).toBe("1.1.0");
 		const host = runtime;
 		const seen = new Set<number>();
 		await action({

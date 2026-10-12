@@ -96,7 +96,7 @@ test("session reset discards pending turns and completed-turn aggregates", () =>
 	endTurn(tracker, previous);
 	startTurn(tracker, previous, 1);
 	tracker.reset();
-	assert.equal(tracker.handle({ type: "agent_settled" }), undefined);
+	assert.equal(tracker.handle({ type: "agent_settled", aborted: false }), undefined);
 	assert.equal(endTurn(tracker, previous, 1), undefined);
 
 	now = 1_000;
@@ -105,7 +105,7 @@ test("session reset discards pending turns and completed-turn aggregates", () =>
 	startTurn(tracker, current);
 	now = 1_100;
 	endTurn(tracker, current);
-	const telemetry = tracker.handle({ type: "agent_settled" });
+	const telemetry = tracker.handle({ type: "agent_settled", aborted: false });
 	assert.ok(telemetry);
 	assert.equal(telemetry.outputTokens, 20);
 	assert.equal(telemetry.totalMs, 100);
@@ -391,7 +391,7 @@ test("excludes tool gaps between assistant messages", () => {
 		}
 		now = secondStartMs + 400;
 		endTurn(tracker, second, 1);
-		return tracker.handle({ type: "agent_settled" })!;
+		return tracker.handle({ type: "agent_settled", aborted: false })!;
 	}
 
 	assert.equal(measure(0).tps, 50);
@@ -418,7 +418,7 @@ test("includes every message's tokens and generation time", () => {
 	}
 	now = 700;
 	endTurn(tracker, measured, 1);
-	const telemetry = tracker.handle({ type: "agent_settled" })!;
+	const telemetry = tracker.handle({ type: "agent_settled", aborted: false })!;
 
 	assert.equal(telemetry.tps, 35.7);
 	assert.equal(telemetry.measurementMs, 700);
@@ -439,7 +439,7 @@ test("counts cache-write tokens as input, matching /session's uncached figure", 
 	tracker.handle(update(message));
 	now = 150;
 	endTurn(tracker, message);
-	const telemetry = tracker.handle({ type: "agent_settled" })!;
+	const telemetry = tracker.handle({ type: "agent_settled", aborted: false })!;
 
 	assert.equal(telemetry.inputTokens, 27099);
 	assert.equal(telemetry.cacheReadTokens, 5000);
@@ -481,7 +481,7 @@ test("aggregates all output and generation time across an agent run", () => {
 	now = 1_600;
 	endTurn(tracker, second, 2);
 	now = 1_700;
-	const telemetry = tracker.handle({ type: "agent_settled" })!;
+	const telemetry = tracker.handle({ type: "agent_settled", aborted: false })!;
 
 	assert.equal(telemetry.tps, 37.9);
 	assert.equal(telemetry.measurementMs, 1_450);
@@ -498,6 +498,7 @@ test("open-tui notifies once after a complete agent run", () => {
 		on(event: string, handler: (event: any, ctx: ExtensionContext) => void) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
+		registerToolRenderer() {},
 		registerCommand() {},
 		getThinkingLevel: () => "off",
 	} as unknown as ExtensionAPI;
@@ -520,7 +521,7 @@ test("open-tui notifies once after a complete agent run", () => {
 	emit("turn_end", { type: "turn_end", turnIndex: 0, message, toolResults: [] });
 
 	assert.equal(notifications.length, 0);
-	emit("agent_settled", { type: "agent_settled" });
+	emit("agent_settled", { type: "agent_settled", aborted: false });
 	assert.equal(notifications.length, 1);
 	assert.match(notifications[0]!, /TPS .*TTFT/);
 });
@@ -554,6 +555,7 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 		on(event: string, handler: (event: any, ctx: ExtensionContext) => void | Promise<void>) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
+		registerToolRenderer() {},
 		registerCommand() {},
 		getThinkingLevel: () => "high",
 	} as unknown as ExtensionAPI;
@@ -618,7 +620,7 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 		const streamedLabel = getThinkingLabel(thinkingComponents[1]!);
 		assert.notEqual(streamedLabel, currentLabel, "each thinking delta must update the label immediately");
 
-		await emit("agent_settled", { type: "agent_settled" });
+		await emit("agent_settled", { type: "agent_settled", aborted: false });
 		// A custom/continuation task can spend time preparing before its assistant
 		// message_start. Its start must still invalidate the previous settle timer.
 		await emit("agent_start", { type: "agent_start" });
@@ -630,7 +632,7 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 		await emit("agent_end", { type: "agent_end", messages: [] });
 		assert.doesNotMatch(stripAnsi(mountedEditor.render(85)[0]!), /done|ended/);
 		assert.match(stripAnsi(mountedEditor.render(85)[0]!), /working/);
-		await emit("agent_settled", { type: "agent_settled" });
+		await emit("agent_settled", { type: "agent_settled", aborted: false });
 		assert.match(stripAnsi(mountedEditor.render(85)[0]!), /ended/);
 		await emit("agent_start", { type: "agent_start" });
 		assert.doesNotMatch(stripAnsi(mountedEditor.render(85)[0]!), /done/);
@@ -671,6 +673,7 @@ test("settled telemetry notifies attached, merges detached, and resets with task
 			on(event: string, handler: (event: any, ctx: ExtensionContext) => void | Promise<void>) {
 				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 			},
+			registerToolRenderer() {},
 			registerCommand() {}, getThinkingLevel: () => "off",
 		} as unknown as ExtensionAPI;
 		const ctx = {

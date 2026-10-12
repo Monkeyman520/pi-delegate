@@ -4,7 +4,7 @@
 
 ## Local setup
 
-Use Git, Bun 1.4.1 or later, and a compatible Pi host. The development dependencies pin Pi 1.0.0. Pi CLI running under Node.js requires Node.js 22.19 or later; children launched by a Bun host require `node` on `PATH`.
+Use Git, Bun 1.4.1 or later, and a compatible Pi host. The development dependencies pin Pi 1.1.0. Pi CLI running under Node.js requires Node.js 22.19 or later; children launched by a Bun host require `node` on `PATH`.
 
 From the repository root:
 
@@ -90,7 +90,7 @@ The test suite includes:
 
 Hook tests create commits only in temporary repositories and do not change this project's index or history. Tests do not include model-call end-to-end scenarios requiring external credentials.
 
-TUI tests exercise real runtime/status APIs, task-panel keyboard/render/scroll logic and Pi's native custom-overlay focus/disposal adapter with an injected terminal driver. They are not a complete real regular/fullscreen terminal rendering, keyboard/picker or IME end-to-end workflow. Host compatibility beyond Pi 1.0.0 is not currently verified.
+TUI tests exercise real runtime/status APIs, task-panel keyboard/render/scroll logic and Pi's native custom-overlay focus/disposal adapter with an injected terminal driver. They are not a complete real regular/fullscreen terminal rendering, keyboard/picker or IME end-to-end workflow. Host compatibility beyond Pi 1.1.0 is not currently verified.
 
 Biome does not check Markdown formatting. For documentation-only changes, inspect the rendered structure, verify relative links and examples, keep the README translations aligned, and run `git diff --check`.
 

@@ -441,3 +441,19 @@ test("Workline settings are independent, localized and persist normalized defaul
 		rmSync(agentDir, { recursive: true, force: true });
 	}
 });
+
+test("compact tool presentation is independently toggleable and localized", async () => {
+	for (const language of ["en", "zh"] as const) {
+		const config = structuredClone(DEFAULT_CONFIG);
+		config.settingsLanguage = language;
+		const settings = await openSettings(config);
+		for (let i = 0; i < 4; i++) settings.component.handleInput("\x1b[B");
+		assert.match(selectedLine(settings.component), language === "zh" ? /紧凑工具展示.*开启/ : /Compact tool presentation.*On/);
+		settings.component.handleInput(" ");
+		assert.equal(settings.getConfig().toolPresentation, false);
+		assert.equal(settings.getConfig().enabled, true);
+		assert.deepEqual(settings.getConfig().footerSegments, config.footerSegments);
+		settings.component.handleInput("q");
+		await settings.waitForClose();
+	}
+});

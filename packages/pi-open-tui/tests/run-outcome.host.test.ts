@@ -19,7 +19,7 @@ import { RunOutcomeTracker, type RunOutcome, type RunState } from "../src/run-ou
 import { deferred, gate, type ResponseStep, runOutcomeProvider } from "./fixtures/run-outcome-provider.ts";
 
 type TrackedEvent = Parameters<RunOutcomeTracker["handle"]>[0];
-type Snapshot = RunState & { type: string; at: number; reason?: string; outcome?: string; isError?: boolean; signalAborted?: boolean };
+type Snapshot = RunState & { type: string; at: number; reason?: string; outcome?: string; isError?: boolean; signalAborted?: boolean; aborted?: boolean };
 type Options = {
 	retry?: boolean;
 	retryDelayMs?: number;
@@ -50,7 +50,7 @@ async function withHost(
 }
 
 async function createHost(steps: ResponseStep[], options: Options) {
-	assert.equal(VERSION, "1.0.0", "these lifecycle assertions are pinned to Pi 1.0.0");
+	assert.equal(VERSION, "1.1.0", "these lifecycle assertions are pinned to Pi 1.1.0");
 	const cwd = await mkdtemp(join(tmpdir(), "open-tui-outcome-host-"));
 	const agentDir = join(cwd, "agent");
 	const state: RunState = { workingSince: undefined, lastRun: undefined };
@@ -72,6 +72,7 @@ async function createHost(steps: ResponseStep[], options: Options) {
 		now += 10;
 		tracker.handle(event, ctx.signal);
 		snapshot(event.type, { signalAborted: ctx.signal?.aborted,
+			...(event.type === "agent_settled" ? { aborted: event.aborted } : {}),
 			...(event.type === "message_end" && event.message.role === "assistant"
 				? { reason: event.message.stopReason }
 				: event.type === "agent_before_settle" ? { outcome: event.outcome } : {}),
@@ -178,7 +179,7 @@ async function createHost(steps: ResponseStep[], options: Options) {
 
 const limits = { timeout: 15_000, concurrency: false };
 
-test("Pi 1.0.0: success is provisional at before_settle and completed only at settled", limits, async () => {
+test("Pi 1.1.0: success is provisional at before_settle and completed only at settled", limits, async () => {
 	const boundaryGate = gate();
 	await withHost([{ kind: "stop" }], { boundaryGate }, async (h) => {
 		const run = h.prompt();
@@ -194,7 +195,7 @@ test("Pi 1.0.0: success is provisional at before_settle and completed only at se
 	});
 });
 
-test("Pi 1.0.0: terminal provider error produces failed at settlement", limits, async () => {
+test("Pi 1.1.0: terminal provider error produces failed at settlement", limits, async () => {
 	await withHost([{ kind: "error" }], {}, async (h) => {
 		await h.prompt();
 		assert.deepEqual(h.trace.filter((e) => e.type === "agent_before_settle").map((e) => e.outcome), ["error"]);
@@ -202,7 +203,7 @@ test("Pi 1.0.0: terminal provider error produces failed at settlement", limits, 
 	});
 });
 
-test("Pi 1.0.0: abort during an active stream produces interrupted, without before_settle", limits, async () => {
+test("Pi 1.1.0: abort during an active stream produces interrupted, without before_settle", limits, async () => {
 	const streamGate = gate();
 	await withHost([{ kind: "stop", gate: streamGate }], {}, async (h) => {
 		const run = h.prompt();
@@ -218,7 +219,7 @@ test("Pi 1.0.0: abort during an active stream produces interrupted, without befo
 	});
 });
 
-test("Pi 1.0.0: automatic error retry succeeds with no interim final and one continuous timer", limits, async () => {
+test("Pi 1.1.0: automatic error retry succeeds with no interim final and one continuous timer", limits, async () => {
 	await withHost([{ kind: "error", error: "429 rate limit exceeded" }, { kind: "stop" }], { retry: true }, async (h) => {
 		await h.prompt();
 		assert.deepEqual(h.retryEvents.map((e) => [e.type, e.success]), [["auto_retry_start", undefined], ["auto_retry_end", true]]);
@@ -230,7 +231,7 @@ test("Pi 1.0.0: automatic error retry succeeds with no interim final and one con
 	});
 });
 
-test("Pi 1.0.0: cancellation during retry wait is neutral ended, not stale failed or guessed interrupted", limits, async () => {
+test("Pi 1.1.0: cancellation during retry wait is interrupted from public settlement evidence", limits, async () => {
 	await withHost([{ kind: "error", error: "429 rate limit exceeded" }], { retry: true, retryDelayMs: 60_000 }, async (h) => {
 		const run = h.prompt();
 		await bounded(h.retryStarted.promise, "automatic retry wait");
@@ -241,11 +242,11 @@ test("Pi 1.0.0: cancellation during retry wait is neutral ended, not stale faile
 		assert.equal(h.trace.some((e) => e.type === "agent_before_settle"), false);
 		assert.equal(h.trace.some((e) => e.reason === "aborted"), false);
 		assert.equal(h.retryEvents.at(-1)?.success, false);
-		h.assertFinal("ended", 1);
+		h.assertFinal("interrupted", 1);
 	});
 });
 
-test("Pi 1.0.0: tool-phase abort uses the captured operation signal", limits, async () => {
+test("Pi 1.1.0: tool-phase abort uses the captured operation signal", limits, async () => {
 	await withHost([{ kind: "toolUse" }], { abortAtToolStart: true }, async (h) => {
 		await h.prompt();
 		assert.ok(h.trace.some((e) => e.reason === "toolUse"));
@@ -254,7 +255,7 @@ test("Pi 1.0.0: tool-phase abort uses the captured operation signal", limits, as
 	});
 });
 
-test("Pi 1.0.0: real failed tool execution followed by a normal assistant is completed", limits, async () => {
+test("Pi 1.1.0: real failed tool execution followed by a normal assistant is completed", limits, async () => {
 	await withHost([{ kind: "toolUse" }, { kind: "stop" }], {}, async (h) => {
 		await h.prompt();
 		assert.ok(h.trace.some((e) => e.type === "tool_execution_end" && e.isError));
@@ -264,7 +265,7 @@ test("Pi 1.0.0: real failed tool execution followed by a normal assistant is com
 	});
 });
 
-test("Pi 1.0.0: length remains neutral even though the host boundary says completed", limits, async () => {
+test("Pi 1.1.0: length remains neutral even though the host boundary says completed", limits, async () => {
 	await withHost([{ kind: "length" }], {}, async (h) => {
 		await h.prompt();
 		assert.ok(h.trace.some((e) => e.reason === "length"));
@@ -273,7 +274,7 @@ test("Pi 1.0.0: length remains neutral even though the host boundary says comple
 	});
 });
 
-test("Pi 1.0.0: before_settle continuation supersedes provisional completion without resetting time", limits, async () => {
+test("Pi 1.1.0: before_settle continuation supersedes provisional completion without resetting time", limits, async () => {
 	const continuationGate = gate();
 	await withHost([{ kind: "stop" }, { kind: "error", gate: continuationGate }], {
 		boundary: (_event, count) => count === 1 ? { continue: true, entries: [{ type: "custom_message", customType: "outcome-continuation", content: "continue once", display: false }] } : undefined,
@@ -292,22 +293,18 @@ test("Pi 1.0.0: before_settle continuation supersedes provisional completion wit
 	});
 });
 
-test("Pi 1.0.0: late before_settle cancellation is observationally ambiguous with normal completion", limits, async () => {
-	const evidence: Array<Array<{ type: string; reason?: string; outcome?: string; signalAborted?: boolean }>> = [];
+test("Pi 1.1.0: public settlement distinguishes late before_settle cancellation", limits, async () => {
 	for (const cancel of [false, true]) {
 		const boundaryGate = gate();
 		await withHost([{ kind: "stop" }], { boundaryGate }, async (h) => {
 			const run = h.prompt();
 			await bounded(boundaryGate.entered.promise, "late boundary cancellation gate");
-			// The agent's operation signal has ended already. abort() is public, but
-			// the host emits no distinct outcome event for this late cancellation.
 			const abort = cancel ? h.session.abort() : Promise.resolve();
 			boundaryGate.release.resolve();
 			await bounded(abort, "late abort");
 			await run;
-			h.assertFinal("completed", 1);
-			evidence.push(h.trace.map(({ type, reason, outcome, signalAborted }) => ({ type, reason, outcome, signalAborted })));
+			h.assertFinal(cancel ? "interrupted" : "completed", 1);
+			assert.equal(h.trace.find((event) => event.type === "agent_settled")?.aborted, cancel);
 		});
 	}
-	assert.deepEqual(evidence[1], evidence[0], "public lifecycle evidence cannot distinguish this cancellation");
 });

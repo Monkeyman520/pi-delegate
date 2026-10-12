@@ -47,6 +47,7 @@ export interface WorklineConfig {
 export interface OpenTuiConfig {
 	enabled: boolean;
 	inlineFooter: boolean;
+	toolPresentation: boolean;
 	settingsLanguage: SettingsLanguage;
 	cursorStyle: CursorStyle;
 	editorBorderStyle: EditorBorderStyle;
@@ -62,6 +63,7 @@ export interface OpenTuiConfig {
 export const DEFAULT_CONFIG: OpenTuiConfig = {
 	enabled: true,
 	inlineFooter: false,
+	toolPresentation: true,
 	settingsLanguage: "en",
 	cursorStyle: "block",
 	editorBorderStyle: "surround",

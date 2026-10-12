@@ -173,7 +173,7 @@ for (const busy of [false, true]) {
 					uiContext: statusHost.ui,
 					onError: (e) => errors.push(e.error),
 				});
-				expect(VERSION).toBe("1.0.0");
+				expect(VERSION).toBe("1.1.0");
 				expect(
 					JSON.parse(readFileSync(join(logs, `${process.pid}.json`), "utf8")),
 				).toMatchObject({ child: false, mode: "tui" });
