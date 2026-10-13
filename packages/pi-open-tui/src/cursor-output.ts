@@ -1,37 +1,8 @@
 import type { Terminal, TUI } from "@earendil-works/pi-tui";
+import { patch, resolveRenderer, type HostRenderer as Renderer } from "./host-patches.ts";
 
 const SYNC_END = "\x1b[?2026l";
-type Renderer = TUI & { doRender(): void };
 type Visibility = "hidden" | "visible" | undefined;
-
-/** Resolve Pi's stable forwarding reference without patching its proxy target. */
-function resolveRenderer(tui: TUI): Renderer {
-	const probe = Symbol("open-tui-renderer");
-	const reference = tui as unknown as Record<symbol, () => Renderer>;
-	if (!Reflect.set(reference, probe, function (this: Renderer) { return this; })) {
-		throw new Error("TUI reference is not writable");
-	}
-	let renderer: Renderer | undefined;
-	try {
-		renderer = reference[probe]!();
-		return renderer;
-	} finally {
-		Reflect.deleteProperty(renderer ?? reference, probe);
-	}
-}
-
-/** Small reversible instance patch. Later wrappers retain an inert original on cleanup. */
-function patch(target: object, key: string, value: unknown): () => void {
-	const descriptor = Object.getOwnPropertyDescriptor(target, key);
-	Object.defineProperty(target, key, {
-		configurable: true, enumerable: descriptor?.enumerable ?? false, writable: true, value,
-	});
-	return () => {
-		if (Reflect.get(target, key) !== value) return;
-		if (descriptor) Object.defineProperty(target, key, descriptor);
-		else Reflect.deleteProperty(target, key);
-	};
-}
 
 /**
  * Bounded control scanner. CSI is carried across writes (at most 64 characters).

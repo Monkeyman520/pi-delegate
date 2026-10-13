@@ -660,6 +660,59 @@ test("ASCII footer renders icons as semantic labels", () => {
 	assert.equal(extensionStatusReads, readsBeforeHidden);
 });
 
+function createFooterFixture(opts: {
+	mode?: "nerd" | "ascii";
+	sessionName?: string | null;
+	theme?: Theme;
+	context?: Partial<Pick<ExtensionContext, "model" | "getContextUsage">>;
+	getModelMeta?: Parameters<typeof installFooter>[3];
+	getExtensionStatuses?: ReadonlyFooterDataProvider["getExtensionStatuses"];
+} = {}) {
+	let footerFactory: NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]> | undefined;
+	const ctx = {
+		...(opts.context ?? {
+			model: { provider: "openai", contextWindow: 1_000 },
+			getContextUsage: () => ({ tokens: 0, contextWindow: 1_000, percent: 0 }),
+		}),
+		ui: {
+			setFooter(factory: typeof footerFactory) {
+				footerFactory = factory;
+			},
+		},
+		sessionManager: {
+			getCwd: () => "/work/project",
+			getEntries: () => [],
+			getSessionName: () => opts.sessionName,
+		},
+	} as unknown as ExtensionContext;
+	const config = structuredClone(DEFAULT_CONFIG);
+	config.icons.mode = opts.mode ?? "ascii";
+	const state: FooterState = {
+		git: emptyGitStatus(),
+		runtime: null,
+		workingSince: undefined,
+		lastRun: undefined,
+	};
+	const handle = installFooter(
+		ctx,
+		() => state,
+		() => config,
+		opts.getModelMeta ?? (() => ({ provider: "OpenAI", model: "gpt-5", effort: "off" })),
+		{ setRequestRender() {}, scheduleGitRefresh() {} },
+	);
+	assert.ok(footerFactory);
+	const footerData = {
+		onBranchChange: () => () => {},
+		getExtensionStatuses: opts.getExtensionStatuses ?? (() => new Map()),
+	} as unknown as ReadonlyFooterDataProvider;
+	const component = footerFactory(
+		{ requestRender() {} } as TUI,
+		opts.theme ?? theme,
+		footerData,
+	) as Component;
+	return { config, state, handle, component };
+}
+
 function renderFooterWithSession(opts: {
 	sessionName?: string | null;
 	mode?: "nerd" | "ascii";
@@ -672,48 +725,11 @@ function renderFooterWithSession(opts: {
 		sessionNameEnabled = true,
 		width = 160,
 	} = opts;
-	const name = sessionName === undefined ? "test-session" : sessionName;
-	let footerFactory: NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]> | undefined;
-	const ctx = {
-		model: { provider: "openai", contextWindow: 1_000 },
-		ui: {
-			setFooter(factory: typeof footerFactory) {
-				footerFactory = factory;
-			},
-		},
-		sessionManager: {
-			getCwd: () => "/work/project",
-			getEntries: () => [],
-			getSessionName: () => name,
-		},
-		getContextUsage: () => ({ tokens: 0, contextWindow: 1_000, percent: 0 }),
-	} as unknown as ExtensionContext;
-	const config = structuredClone(DEFAULT_CONFIG);
-	config.icons.mode = mode;
+	const { config, component } = createFooterFixture({
+		mode,
+		sessionName: sessionName === undefined ? "test-session" : sessionName,
+	});
 	config.footerSegments.sessionName = sessionNameEnabled;
-	const state: FooterState = {
-		git: emptyGitStatus(),
-		runtime: null,
-		workingSince: undefined,
-		lastRun: undefined,
-	};
-	installFooter(
-		ctx,
-		() => state,
-		() => config,
-		() => ({ provider: "OpenAI", model: "gpt-5", effort: "off" }),
-		{ setRequestRender() {}, scheduleGitRefresh() {} },
-	);
-	assert.ok(footerFactory);
-	const footerData = {
-		onBranchChange: () => () => {},
-		getExtensionStatuses: () => new Map(),
-	} as unknown as ReadonlyFooterDataProvider;
-	const component = footerFactory(
-		{ requestRender() {} } as TUI,
-		theme,
-		footerData,
-	) as Component;
 	return component.render(width).join("\n");
 }
 
@@ -753,47 +769,8 @@ function renderFooterWithHost(opts: {
 	width?: number;
 } = {}): string {
 	const { mode = "ascii", hostnameEnabled = true, width = 160 } = opts;
-	let footerFactory: NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]> | undefined;
-	const ctx = {
-		model: { provider: "openai", contextWindow: 1_000 },
-		ui: {
-			setFooter(factory: typeof footerFactory) {
-				footerFactory = factory;
-			},
-		},
-		sessionManager: {
-			getCwd: () => "/work/project",
-			getEntries: () => [],
-			getSessionName: () => undefined,
-		},
-		getContextUsage: () => ({ tokens: 0, contextWindow: 1_000, percent: 0 }),
-	} as unknown as ExtensionContext;
-	const config = structuredClone(DEFAULT_CONFIG);
-	config.icons.mode = mode;
+	const { config, component } = createFooterFixture({ mode });
 	config.footerSegments.hostname = hostnameEnabled;
-	const state: FooterState = {
-		git: emptyGitStatus(),
-		runtime: null,
-		workingSince: undefined,
-		lastRun: undefined,
-	};
-	installFooter(
-		ctx,
-		() => state,
-		() => config,
-		() => ({ provider: "OpenAI", model: "gpt-5", effort: "off" }),
-		{ setRequestRender() {}, scheduleGitRefresh() {} },
-	);
-	assert.ok(footerFactory);
-	const footerData = {
-		onBranchChange: () => () => {},
-		getExtensionStatuses: () => new Map(),
-	} as unknown as ReadonlyFooterDataProvider;
-	const component = footerFactory(
-		{ requestRender() {} } as TUI,
-		theme,
-		footerData,
-	) as Component;
 	return component.render(width).join("\n");
 }
 
@@ -831,46 +808,10 @@ const styledTheme = {
 } as Theme;
 
 function renderStatusLines(statuses: Map<string, string>, width = 160): string[] {
-	let footerFactory: NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]> | undefined;
-	const ctx = {
-		model: { provider: "openai", contextWindow: 1_000 },
-		ui: {
-			setFooter(factory: typeof footerFactory) {
-				footerFactory = factory;
-			},
-		},
-		sessionManager: {
-			getCwd: () => "/work/project",
-			getEntries: () => [],
-			getSessionName: () => undefined,
-		},
-		getContextUsage: () => ({ tokens: 0, contextWindow: 1_000, percent: 0 }),
-	} as unknown as ExtensionContext;
-	const config = structuredClone(DEFAULT_CONFIG);
-	config.icons.mode = "ascii";
-	const state: FooterState = {
-		git: emptyGitStatus(),
-		runtime: null,
-		workingSince: undefined,
-		lastRun: undefined,
-	};
-	installFooter(
-		ctx,
-		() => state,
-		() => config,
-		() => ({ provider: "OpenAI", model: "gpt-5", effort: "off" }),
-		{ setRequestRender() {}, scheduleGitRefresh() {} },
-	);
-	assert.ok(footerFactory);
-	const footerData = {
-		onBranchChange: () => () => {},
+	const { component } = createFooterFixture({
+		theme: styledTheme,
 		getExtensionStatuses: () => statuses,
-	} as unknown as ReadonlyFooterDataProvider;
-	const component = footerFactory(
-		{ requestRender() {} } as TUI,
-		styledTheme,
-		footerData,
-	) as Component;
+	});
 	// The two main footer rows come first, status rows follow them.
 	return component.render(width).slice(2);
 }
@@ -958,26 +899,19 @@ test("status line wraps coloured text inside the given width", () => {
 });
 
 function footerRegressionFixture() {
-	let factory: NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]> | undefined;
 	const reads = { model: 0, statuses: 0 };
-	const ctx = {
-		ui: { setFooter(next: typeof factory) { factory = next; } },
-		sessionManager: { getCwd: () => "/work/project", getEntries: () => [], getSessionName: () => undefined },
-		getContextUsage: () => undefined,
-	} as unknown as ExtensionContext;
-	const config = structuredClone(DEFAULT_CONFIG);
-	config.icons.mode = "ascii";
-	const state: FooterState = { git: emptyGitStatus(), runtime: null, workingSince: undefined, lastRun: undefined };
-	const handle = installFooter(ctx, () => state, () => config, () => {
-		reads.model++;
-		return { provider: "fixture", model: "model", effort: "off" };
-	}, { setRequestRender() {}, scheduleGitRefresh() {} });
-	assert.ok(factory);
-	const component = factory({ requestRender() {} } as TUI, theme, {
-		onBranchChange: () => () => {},
-		getExtensionStatuses() { reads.statuses++; return new Map([["fixture", "extension status"]]); },
-	} as unknown as ReadonlyFooterDataProvider) as Component;
-	return { config, state, handle, component, reads };
+	const fixture = createFooterFixture({
+		context: { getContextUsage: () => undefined },
+		getModelMeta: () => {
+			reads.model++;
+			return { provider: "fixture", model: "model", effort: "off" };
+		},
+		getExtensionStatuses: () => {
+			reads.statuses++;
+			return new Map([["fixture", "extension status"]]);
+		},
+	});
+	return { ...fixture, reads };
 }
 
 test("detached Git branch and commit switches are independent in plain and inline layouts", () => {

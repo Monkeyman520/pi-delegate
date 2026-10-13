@@ -318,3 +318,65 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		assert.deepEqual(f.warnings, []);
 	});
 }
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: editor/workline refreshes discover mounted Users only once per host frame`, (t) => {
+		const f = fixture(mode, "bar");
+		t.after(() => f.cleanup());
+		f.config.messageLayout = "compact";
+		const user = new UserMessageComponent("late user before editor");
+		const native = user.render;
+		f.host.children.unshift(user);
+		f.render();
+		let discoveries = 0;
+		const renderer = f.host as TUI & { getMountedRoots(): readonly unknown[] };
+		const mounted = renderer.getMountedRoots.bind(renderer);
+		renderer.getMountedRoots = () => { discoveries++; return mounted(); };
+		f.installed.requestRender();
+		f.editor.render(80);
+		assert.equal(discoveries, 0, "refreshes rebind without traversing the transcript");
+		f.render();
+		assert.equal(discoveries, 1, "the protected frame seam owns discovery");
+		assert.notEqual(user.render, native);
+		f.config.messageLayout = "normal";
+		f.installed.requestRender();
+		assert.equal(user.render, native, "mode-off restores Users immediately without scanning");
+	});
+	test(`${mode}: first remounted frame adapts a new User before the editor`, (t) => {
+		const f = fixture(mode, "underline");
+		t.after(() => f.cleanup());
+		f.config.messageLayout = "compact";
+		f.render();
+		f.switchMode(mode === "regular" ? "fullscreen" : "regular", false, mode === "regular");
+		const user = new UserMessageComponent("first remounted user");
+		const native = user.render;
+		f.host.children.unshift(user);
+		const output = f.render();
+		assert.notEqual(user.render, native);
+		assert.ok(output.includes("first remounted user"));
+		assert.ok(output.includes("|"));
+		assert.ok(output.endsWith(END));
+		assert.deepEqual(f.warnings, []);
+	});
+	test(`${mode}: coordinated cleanup preserves a later frame wrapper and makes retained adapters inert`, (t) => {
+		const f = fixture(mode, "bar");
+		t.after(() => f.cleanup());
+		f.config.messageLayout = "compact";
+		const user = new UserMessageComponent("restored native user");
+		const native = user.render;
+		f.host.children.unshift(user);
+		f.render();
+		const retained = Reflect.get(f.host, "doRender");
+		let calls = 0;
+		const later = function (this: TUI) { calls++; return retained.call(this); };
+		Reflect.set(f.host, "doRender", later);
+		f.installed.cleanup();
+		assert.equal(Reflect.get(f.host, "doRender"), later);
+		assert.equal(user.render, native);
+		assert.equal(f.terminal.write, f.nativeWrite);
+		f.render(true);
+		assert.ok(calls > 0);
+		assert.equal(user.render, native, "retained outer wrapper cannot reapply User layout");
+		assert.deepEqual(f.warnings, []);
+	});
+}

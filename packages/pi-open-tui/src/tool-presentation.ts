@@ -1,64 +1,19 @@
 import * as host from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, Theme, ToolRenderers, ToolRendererResolver, CodemodeToolDetails } from "@earendil-works/pi-coding-agent";
-import { type Component, Box, Container, Spacer, Text, getCapabilities, imageFallback, visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, Theme, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
+import { type Component, Box, Container, Spacer, Text, getCapabilities, imageFallback } from "@earendil-works/pi-tui";
 import type { OpenTuiConfig } from "./config.ts";
-import { resolveGlyphs } from "./icons.ts";
 import { MessageRail } from "./message-layout.ts";
+import {
+	type Result, type Status, argumentsText, clean, finite, toolPolicy, statusColor,
+	renderCallSummary, renderChildActivity, compactContent, compactDiffLines, defaultOutputLines,
+	renderNotices, expansionHint, truncateSummary, CHILD_SUMMARY_NOTE,
+} from "./tool-presentation-policy.ts";
 
-type Result = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
+// Keep the existing helper exports available to consumers.
+export { codemodeCalls, selectChildren } from "./tool-presentation-policy.ts";
+
 type ToolRenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
-type Child = CodemodeToolDetails["calls"][number];
-type Status = Child["status"] | "pending";
 const CARD = Symbol("open-tui-tool-card");
-const CHILD_ROWS = 5;
-const OUTPUT_LINES = 3;
-
-function record(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function finite(value: unknown): value is number {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0;
-}
-function clean(text: string): string {
-	// Never allow untrusted arguments/output to inject terminal controls into a summary.
-	return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
-}
-function duration(ms: number | undefined): string {
-	return ms === undefined ? "" : ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-}
-function textOutput(result: Result): string {
-	return result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-}
-function truncateSummary(text: string, width: number): string {
-	// truncateToWidth resets all SGR styles around its ellipsis. Our summaries inherit
-	// their background from the host's Box, so reset text styles without clearing it.
-	// Only apply this to our own lines; composed third-party components stay untouched.
-	return truncateToWidth(text, width).replace(/\x1b\[0m/g, "\x1b[22;23;24;25;27;28;29;39m");
-}
-
-/** Strictly validate the available host metadata; never infer child status from output. */
-export function codemodeCalls(details: unknown): Child[] | undefined {
-	if (!record(details) || !Array.isArray(details.calls)) return undefined;
-	if (details.fullOutputPath !== undefined && typeof details.fullOutputPath !== "string") return undefined;
-	if (!details.calls.every((call: unknown) => record(call)
-		&& typeof call.id === "string" && typeof call.name === "string" && typeof call.args === "string"
-		&& ["running", "ok", "error", "cancelled"].includes(String(call.status))
-		&& (call.durationMs === undefined || finite(call.durationMs))
-		&& (call.cost === undefined || finite(call.cost))
-		&& (call.error === undefined || typeof call.error === "string"))) return undefined;
-	return details.calls as Child[];
-}
-
-export function selectChildren(calls: readonly Child[], budget = CHILD_ROWS): { shown: Child[]; hidden: Child[] } {
-	const priority = calls.filter((call) => call.status !== "ok");
-	const selected = new Set([...priority, ...calls.filter((call) => call.status === "ok")].slice(0, budget));
-	return { shown: calls.filter((call) => selected.has(call)), hidden: calls.filter((call) => !selected.has(call)) };
-}
-function counts(calls: readonly Child[]): string {
-	return (["running", "ok", "error", "cancelled"] as const)
-		.map((status) => ({ status, count: calls.filter((call) => call.status === status).length }))
-		.filter(({ count }) => count > 0).map(({ status, count }) => `${count} ${status}`).join(", ");
-}
 
 /** Native identity gates only tool-specific enhancements, never basic styling eligibility. */
 function nativeRenderers(): Map<string, ToolRenderers & { parameters: unknown }> {
@@ -72,40 +27,6 @@ function nativeRenderers(): Map<string, ToolRenderers & { parameters: unknown }>
 	// Capture a definition on a capture-only stub, not the real API: no tools are re-registered or executed.
 	host.createCodemodeExtension()({ registerTool: (tool: { name: string } & ToolRenderers & { parameters: unknown }) => native.set(tool.name, tool) } as unknown as ExtensionAPI);
 	return native;
-}
-function target(name: string, args: unknown): string | undefined {
-	if (!record(args)) return undefined;
-	if (name === "codemode") return typeof args.code === "string" ? "script" : undefined;
-	if (name === "bash") return typeof args.command === "string" ? args.command : undefined;
-	if (name === "grep" || name === "find") {
-		return typeof args.pattern === "string" && (args.path === undefined || typeof args.path === "string")
-			? `${args.pattern}${args.path ? ` in ${args.path}` : ""}` : undefined;
-	}
-	if (name === "ls") return args.path === undefined ? "." : typeof args.path === "string" ? args.path : undefined;
-	if (typeof args.path !== "string") return undefined;
-	if (name === "edit" && !(Array.isArray(args.edits) && args.edits.length > 0
-		&& args.edits.every((edit) => record(edit) && typeof edit.oldText === "string" && typeof edit.newText === "string"))
-		&& !(typeof args.oldText === "string" && typeof args.newText === "string")) return undefined;
-	if (name === "write" && typeof args.content !== "string") return undefined;
-	if (name === "read" && ((args.offset !== undefined && !finite(args.offset)) || (args.limit !== undefined && !finite(args.limit)))) return undefined;
-	return args.path;
-}
-
-// Keep generic summaries bounded without interpreting keys as paths, commands or outcomes.
-function argumentPreview(value: unknown, depth = 0): unknown {
-	if (typeof value === "string") return clean(value).slice(0, 160) + (value.length > 160 ? "…" : "");
-	if (value === null || typeof value !== "object") return value;
-	if (depth >= 2) return Array.isArray(value) ? "[…]" : "{…}";
-	if (Array.isArray(value)) return [...value.slice(0, 6).map((item) => argumentPreview(item, depth + 1)), ...(value.length > 6 ? ["…"] : [])];
-	const entries = Object.entries(value);
-	return Object.fromEntries([
-		...entries.slice(0, 6).map(([key, item]) => [clean(key), argumentPreview(item, depth + 1)]),
-		...(entries.length > 6 ? [["…", "…"]] : []),
-	]);
-}
-function argumentsText(args: unknown, expanded = false): string {
-	try { return JSON.stringify(expanded ? args : argumentPreview(args), null, expanded ? 2 : undefined) ?? ""; }
-	catch { return "[arguments unavailable]"; }
 }
 
 /** Compose actual children, rather than flattening their lines and losing mouse/focus routing. */
@@ -193,15 +114,6 @@ export class ToolPresentation {
 	private status(context: ToolRenderContext): Status {
 		return context.isPartial ? context.executionStarted ? "running" : "pending" : context.isError ? "error" : "ok";
 	}
-	private statusColor(status: Status): "error" | "success" | "warning" {
-		return status === "error" ? "error" : status === "ok" ? "success" : "warning";
-	}
-	private statusText(status: Status, theme: Theme): string {
-		const glyphs = resolveGlyphs(this.getConfig().icons.mode);
-		const icon = status === "ok" ? glyphs.done : status === "error" ? glyphs.failed
-			: status === "cancelled" ? glyphs.interrupted : glyphs.working;
-		return theme.fg(this.statusColor(status), `${icon} ${status}`);
-	}
 	private elapsed(context: ToolRenderContext, state: CardState): number | undefined {
 		if (finite(context.durationMs)) return context.durationMs;
 		const live = state.epoch === this.epoch && context.isPartial ? this.live.get(context.toolCallId) : undefined;
@@ -232,7 +144,7 @@ export class ToolPresentation {
 		return new ToolContainer(() => {
 			const config = this.getConfig();
 			if (config.enabled && config.messageLayout === "compact") {
-				return [new MessageRail(component, (text) => theme.fg(this.statusColor(this.status(context)), text), config.icons.mode === "ascii" ? "|" : "┃")];
+				return [new MessageRail(component, (text) => theme.fg(statusColor(this.status(context)), text), config.icons.mode === "ascii" ? "|" : "┃")];
 			}
 			if (nativeShell === "self") return [component];
 			// Reproduce the host default shell across the call/result sections. The host
@@ -247,8 +159,6 @@ export class ToolPresentation {
 		});
 	}
 	private compose(name: string, base: ToolRenderers, recognized: boolean): ToolRenderers {
-		const optimized = (args: unknown, result?: Result) => recognized && target(name, args) !== undefined
-			&& !(name === "codemode" && result && !codemodeCalls(result.details));
 		const renderCall = (args: unknown, theme: Theme, context: ToolRenderContext, state: CardState): Component => {
 			try {
 				state.nativeCall = base.renderCall?.(args, theme, {
@@ -260,9 +170,7 @@ export class ToolPresentation {
 		const defaultResult = (result: Result, options: Parameters<NonNullable<ToolRenderers["renderResult"]>>[1], theme: Theme, context: ToolRenderContext): Component => {
 			// Generic details also recover raw parent content omitted by a specialized renderer.
 			// Images themselves remain owned by ToolExecutionComponent.
-			const output = textOutput(result).split("\n").map(clean);
-			const lines = options.expanded || !this.enhanced() ? output : output.slice(0, OUTPUT_LINES);
-			if (!options.expanded && this.enhanced() && output.length > OUTPUT_LINES) lines.push("More output — expand for details");
+			const lines = defaultOutputLines(result, options.expanded || !this.enhanced());
 			if (!context.showImages || !getCapabilities().images) {
 				for (const part of result.content) if (part.type === "image") lines.push(imageFallback(part.mimeType));
 			}
@@ -289,19 +197,16 @@ export class ToolPresentation {
 				if (live) live.invalidate = context.invalidate;
 				return this.frame(new ToolContainer(() => {
 					if (!this.enhanced()) return [renderCall(args, theme, context, state)];
-					const special = optimized(args, state.result);
+					const special = toolPolicy(name, args, recognized, state.result).special;
 					const header: Component = {
 						invalidate() {},
 						render: (width) => {
-							const value = special ? target(name, args)! : argumentsText(args);
-							const summary = !(special && name === "codemode") && state.result && !context.isPartial
-								? clean(textOutput(state.result).split("\n").find((line) => line.trim()) ?? "") : "";
-							const time = duration(this.elapsed(context, state));
-							const title = `${this.statusText(this.status(context), theme)} ${theme.fg("toolTitle", clean(name))}${value ? ` ${theme.bold(theme.fg("accent", clean(value)))}` : ""}`;
-							const suffix = time && width >= 16 ? ` ${theme.fg("dim", time)}` : "";
-							const line = truncateSummary(`${title}${summary ? ` · ${theme.fg(context.isError ? "error" : "muted", summary)}` : ""}`, Math.max(1, width - visibleWidth(suffix))) + suffix;
-							return [line, ...(special && name === "codemode" && !state.result
-								? [truncateSummary(theme.fg("dim", host.keyHint("app.tools.expand", "to expand script")), width)] : [])];
+							return renderCallSummary({
+								name, args, special, result: state.result,
+								isPartial: context.isPartial, isError: context.isError, status: this.status(context),
+								elapsedMs: this.elapsed(context, state),
+								scriptHint: special && name === "codemode" && !state.result ? host.keyHint("app.tools.expand", "to expand script") : "",
+							}, theme, this.getConfig().icons.mode, width);
 						},
 					};
 					// Do not flatten custom components: they may own buttons, focus or mouse regions.
@@ -314,10 +219,9 @@ export class ToolPresentation {
 				state.result = result;
 				if (recognized && name === "bash" && !options.isPartial && state.nativeResult) renderResult(result, options, theme, context, state);
 				return this.frame(new ToolContainer(() => {
-					const special = optimized(context.args, result);
-					const calls = special && name === "codemode" ? codemodeCalls(result.details) : undefined;
+					const { special, calls } = toolPolicy(name, context.args, recognized, result);
 					if (!this.enhanced() || options.expanded) {
-						const note = this.enhanced() && calls ? new Text(theme.fg("muted", "Child records are host summaries (arguments/errors may be truncated); raw child results are not retained."), 0, 0) : undefined;
+						const note = this.enhanced() && calls ? new Text(theme.fg("muted", CHILD_SUMMARY_NOTE), 0, 0) : undefined;
 						const raw = this.enhanced() && options.expanded && !special && base.renderResult
 							? [defaultResult(result, options, theme, context)] : [];
 						return [...(note ? [note] : []), ...raw, renderResult(result, options, theme, context, state)];
@@ -328,44 +232,21 @@ export class ToolPresentation {
 					const preview: Component = {
 						invalidate() {},
 						render: (width) => {
-							const lines: string[] = [];
-							if (calls) {
-								lines.push(...wrapTextWithAnsi(theme.fg("muted", `Observed ${calls.length} calls${calls.length ? `: ${counts(calls)}` : ""}`), Math.max(1, width)));
-								const { shown, hidden } = selectChildren(calls);
-								for (const call of shown) {
-									const time = duration(call.durationMs);
-									const cost = call.cost === undefined ? "" : ` $${call.cost.toPrecision(3)}`;
-									lines.push(`  ${this.statusText(call.status, theme)} ${theme.fg("toolTitle", clean(call.name))} ${clean(call.args)}${time ? ` ${theme.fg("dim", time)}` : ""}${theme.fg("dim", cost)}`);
-									if (call.error) lines.push(theme.fg("error", `    ${clean(call.error)}`));
-								}
-								if (hidden.length) lines.push(...wrapTextWithAnsi(theme.fg("warning", `Hidden ${hidden.length}: ${counts(hidden)} — expand for all records`), Math.max(1, width)));
-							}
-							if (special && name === "edit") {
-								const details = record(result.details) ? result.details : {};
-								if (!context.isError && typeof details.diff === "string") {
-									const diff = new Text(host.renderDiff(details.diff), 0, 0).render(width);
-									lines.push(...diff.slice(0, 6));
-									if (diff.length > 6) lines.push(theme.fg("dim", "More diff — expand for details"));
-								} else lines.push(...renderResult(result, options, theme, context, state).render(width));
-							} else if (!options.isPartial || context.isError) {
-								let output = textOutput(result);
-								if (calls) output = output.replace(/^Script (?:completed|failed)\nWall time [\d.]+ seconds\nOutput:\n/, "");
-								const preview = output.split("\n").filter((line) => line.trim()).slice(0, OUTPUT_LINES);
-								for (const line of preview) lines.push(theme.fg(context.isError ? "error" : "toolOutput", clean(line)));
-								if (context.isError && !calls) {
-									const tail = output.split("\n").reverse().find((line) => line.trim());
-									if (tail && !preview.includes(tail)) lines.push(theme.fg("error", clean(tail)));
-								}
-								if (context.isError && calls) {
-									const errorIndex = output.lastIndexOf("Script error:");
-									if (errorIndex >= 0) lines.push(theme.fg("error", clean(output.slice(errorIndex))));
-								}
+							const lines = renderChildActivity(calls, theme, this.getConfig().icons.mode, width);
+							const content = compactContent(name, special, result, options.isPartial, context.isError, calls);
+							if (content.kind === "diff") {
+								const diff = new Text(host.renderDiff(content.diff), 0, 0).render(width);
+								lines.push(...compactDiffLines(diff, theme));
+							} else if (content.kind === "native-edit") {
+								lines.push(...renderResult(result, options, theme, context, state).render(width));
+							} else {
+								lines.push(...content.lines.map((line) => theme.fg(context.isError ? "error" : "toolOutput", line)));
 							}
 							if (!base.renderResult && (!context.showImages || !getCapabilities().images)) {
 								for (const part of result.content) if (part.type === "image") lines.push(imageFallback(part.mimeType));
 							}
-							lines.push(...this.notices(result, theme, width));
-							lines.push(theme.fg("dim", `${host.keyHint("app.tools.expand", "to expand")} · ${calls ? "script, output & host child summaries (no raw child results)" : "arguments & result"}`));
+							lines.push(...renderNotices(result, theme, width));
+							lines.push(theme.fg("dim", expansionHint(calls, host.keyHint("app.tools.expand", "to expand"))));
 							return lines.map((line) => truncateSummary(line, width));
 						},
 					};
@@ -373,21 +254,5 @@ export class ToolPresentation {
 				}), context, state, base.renderShell, false, theme);
 			},
 		};
-	}
-
-	private notices(result: Result, theme: Theme, width: number): string[] {
-		const details = record(result.details) ? result.details : {};
-		const lines: string[] = [];
-		if (record(details.truncation) && details.truncation.truncated === true) lines.push("Output truncated by host");
-		for (const key of ["matchLimitReached", "resultLimitReached", "entryLimitReached", "linesTruncated"]) {
-			if (details[key]) lines.push(`Host truncation: ${key} = ${details[key]}`);
-		}
-		if (typeof details.fullOutputPath === "string") lines.push(`Full output: ${clean(details.fullOutputPath)}`);
-		// Known native notices may be in a tail rather than structured details (read/grep/bash).
-		for (const line of textOutput(result).split("\n")) {
-			if (/^\[(?:Output truncated|Truncated:|First line exceeds|Showing |Full output|.*(?:truncated|full output (?:saved|written)))/i.test(line)) lines.push(clean(line));
-		}
-		// Paths/notices wrap rather than ellipsize: a hidden tail must not hide file access.
-		return [...new Set(lines)].flatMap((line) => wrapTextWithAnsi(theme.fg("warning", line), Math.max(1, width)));
 	}
 }

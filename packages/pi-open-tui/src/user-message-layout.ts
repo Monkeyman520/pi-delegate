@@ -2,36 +2,12 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { sliceByColumn, truncateToWidth, type Component, type Markdown, type TUI } from "@earendil-works/pi-tui";
 import type { OpenTuiConfig } from "./config.ts";
 import { isImageRow } from "./message-layout.ts";
+import { patch, resolveRenderer, type HostRenderer } from "./host-patches.ts";
 
 const ZONE_START = "\x1b]133;A\x07";
 const ZONE_END = "\x1b]133;B\x07\x1b]133;C\x07";
-type Renderer = TUI & { doRender(): void; getMountedRoots(): readonly Component[] };
+type Renderer = HostRenderer & { getMountedRoots(): readonly Component[] };
 type User = Component & { children: Component[]; outputPad: number; text: string; rebuild(): void };
-
-function patch(target: object, key: string, value: unknown): () => void {
-	const descriptor = Object.getOwnPropertyDescriptor(target, key);
-	Object.defineProperty(target, key, { configurable: true, writable: true, enumerable: descriptor?.enumerable ?? false, value });
-	return () => {
-		if (Reflect.get(target, key) !== value) return;
-		if (descriptor) Object.defineProperty(target, key, descriptor);
-		else Reflect.deleteProperty(target, key);
-	};
-}
-
-// Editor factories receive Pi's forwarding reference; patch the current instance,
-// not the reference's proxy target. Re-resolve when the host changes TUI mode.
-function resolve(tui: TUI): Renderer {
-	const probe = Symbol("open-tui-user-layout");
-	let renderer: Renderer | undefined;
-	try {
-		if (!Reflect.set(tui, probe, function (this: Renderer) { return this; })) throw new Error("Read-only TUI");
-		renderer = Reflect.get(tui, probe).call(tui);
-		if (!renderer || typeof renderer.doRender !== "function" || typeof renderer.getMountedRoots !== "function") throw new Error("Unsupported TUI");
-		return renderer;
-	} finally {
-		Reflect.deleteProperty(renderer ?? tui, probe);
-	}
-}
 
 function markdown(user: User): Markdown | undefined {
 	const child = user.children?.[0];
@@ -117,14 +93,15 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 		} catch { restoreUsers(); warn(); }
 	}
 
-	function refresh(): void {
+	// Coordinated editor refreshes only rebind. Discover mounted Users once at the
+	// protected frame seam; standalone callers may still request an immediate scan.
+	function refresh(scanMounted = true): void {
 		if (!active) return;
 		try {
-			const next = resolve(tui);
+			const next = resolveRenderer(tui) as Renderer;
+			if (typeof next.getMountedRoots !== "function") throw new Error("Unsupported TUI roots");
 			if (next !== renderer) {
 				undoRenderer?.(); restoreUsers();
-				// Release this outer wrapper before another compatibility adapter
-				// rebinds, then wrap its new method; preserve cleanup ownership/order.
 				beforeBind?.();
 				renderer = next;
 				const native = next.doRender;
@@ -133,7 +110,8 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 					return native.call(this);
 				});
 			}
-			scan();
+			if (scanMounted) scan();
+			else if (!compact()) restoreUsers();
 		} catch { restoreUsers(); warn(); }
 	}
 	function releaseRenderer(): void {

@@ -17,19 +17,9 @@ import {
 	type FooterState,
 } from "./state.ts";
 import { ToolPresentation } from "./tool-presentation.ts";
-import { resolveGlyphs } from "./icons.ts";
-import {
-	buildPeekLabel,
-	collectPeekParts,
-	createPeekState,
-	reducePeek,
-	type PeekState,
-} from "./peek.ts";
+import { PeekController } from "./peek-controller.ts";
 
 type PendingUiChange = "install" | "uninstall";
-const HIDDEN_THINKING_HORIZONTAL_PADDING = 2;
-// Pi's fullscreen transcript can reserve one more column for its scrollbar.
-const HIDDEN_THINKING_SCROLLBAR_RESERVE = 1;
 
 export function getPendingUiChange(enabled: boolean, active: boolean): PendingUiChange | undefined {
 	if (enabled === active) return undefined;
@@ -70,13 +60,14 @@ export default function (pi: ExtensionAPI) {
 	let editor: ReturnType<typeof installEditor> | undefined;
 	let pendingUiChange: PendingUiChange | undefined;
 
-	// thinking-peek state (rendered by Pi inside its hidden-thinking block)
-	const peek: PeekState = createPeekState();
-	let peekFrame = 0;
-	let peekSettleTimer: ReturnType<typeof setTimeout> | undefined;
-	let peekTaskEpoch = 0; // bumped at every agent task boundary
-	let peekLabelActive = false;
-	let peekWarningShown = false;
+	const peekController = new PeekController({
+		getConfig: () => config,
+		getEditor: () => editor,
+		getContext: () => lastCtx,
+		isActive: () => active,
+		isTuiContext,
+		lifecycle: sessionLifecycle,
+	});
 
 	const gitRefresh = new LatestRefresh<typeof state.git>((git) => {
 		state.git = git;
@@ -89,56 +80,6 @@ export default function (pi: ExtensionAPI) {
 
 	const getThinkingLevel = () => (sessionLifecycle.isCurrent() ? pi.getThinkingLevel() : "off");
 
-	/** True while the agent is running (false during session-restore replay). */
-	const isAgentIdle = (ctx: ExtensionContext): boolean => {
-		try {
-			return (ctx as ExtensionContext & { isIdle?: () => boolean }).isIdle?.() === true;
-		} catch {
-			return false;
-		}
-	};
-
-	/** Pi decides whether this label is visible; our toggle only controls updates. */
-	const isPeekEnabled = () => sessionLifecycle.isCurrent() && config.enabled && config.thinkingPeek.lines > 0 && active;
-
-	const setPeekLabel = (ctx?: ExtensionContext): void => {
-		if (!isPeekEnabled() || peek.phase === "idle") return;
-		const target = ctx ?? lastCtx;
-		if (!target || !isTuiContext(target)) return;
-		const columns = editor?.getViewportWidth();
-		const updated = columns !== undefined && editor?.setLatestHiddenThinkingLabel(buildPeekLabel(
-			peek,
-			peekFrame,
-			resolveGlyphs(config.icons.mode),
-			Math.max(1, columns - HIDDEN_THINKING_HORIZONTAL_PADDING - HIDDEN_THINKING_SCROLLBAR_RESERVE),
-			config.thinkingPeek.lines,
-		));
-		if (updated) peekLabelActive = true;
-		else if (!peekWarningShown) {
-			peekWarningShown = true;
-			target.ui.notify("open-tui: thinking peek unavailable on this host; retaining the native label", "warning");
-		}
-	};
-
-	const clearPeekLabel = (ctx?: ExtensionContext): void => {
-		if (!peekLabelActive) return;
-		const target = ctx ?? lastCtx;
-		if (!target || !isTuiContext(target)) return;
-		// The global reset is safe here: every completed message returns to Pi's native label.
-		target.ui.setHiddenThinkingLabel();
-		peekLabelActive = false;
-	};
-
-	/** Reset peek state to idle and cancel any scheduled cleanup. */
-	const resetPeek = () => {
-		peek.phase = "idle";
-		peek.tail = "";
-		editor?.resetHiddenThinkingLabelTarget();
-		if (peekSettleTimer) {
-			clearTimeout(peekSettleTimer);
-			peekSettleTimer = undefined;
-		}
-	};
 	const applyUi = (ctx: ExtensionContext) => {
 		if (!isTuiContext(ctx)) return;
 		if (!config.enabled) {
@@ -190,8 +131,7 @@ export default function (pi: ExtensionAPI) {
 			cleanupFooter = undefined;
 			editor = undefined;
 			requestFooterRender = undefined;
-			resetPeek();
-			clearPeekLabel(ctx);
+			peekController.resetAndClear(ctx);
 			active = false;
 		}
 	};
@@ -251,9 +191,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		sessionLifecycle.start();
 		pendingUiChange = undefined;
-		peekWarningShown = false;
-		peekTaskEpoch++;
-		resetPeek();
+		peekController.startSession();
 		lastCtx = ctx;
 		gitRefresh.invalidate();
 		runtimeRefresh.invalidate();
@@ -269,7 +207,7 @@ export default function (pi: ExtensionAPI) {
 		toolPresentation.startSession(isTuiContext(ctx));
 		toolPresentationWarningShown = false;
 		notifyToolPresentationCapability(ctx);
-		clearPeekLabel(ctx);
+		peekController.clearLabel(ctx);
 
 		applyUi(ctx);
 
@@ -296,9 +234,7 @@ export default function (pi: ExtensionAPI) {
 		const newRun = state.workingSince === undefined;
 		runOutcome.handle(event, ctx.signal);
 		turnTelemetry.handle(event);
-		// agent_start also covers custom-message and continuation-triggered tasks
-		// that do not emit a user message_start event.
-		peekTaskEpoch++;
+		peekController.startTask();
 		if (newRun) worklineTelemetry = undefined;
 		startWorkingTimer();
 	});
@@ -323,38 +259,12 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("message_start", (event, ctx) => {
 		turnTelemetry.handle(event);
-		if (!sessionLifecycle.isCurrent() || isAgentIdle(ctx)) return;
-		const role = event.message?.role;
-		if (role === "user") {
-			// Restore Pi's native label until real thinking arrives. The task epoch is
-			// advanced by agent_start so custom/no-user tasks are covered too.
-			resetPeek();
-			clearPeekLabel(ctx);
-		} else if (role === "assistant") {
-			resetPeek();
-			clearPeekLabel(ctx);
-		}
+		peekController.messageStart(event.message, ctx);
 	});
 
 	pi.on("message_update", (event, ctx) => {
 		turnTelemetry.handle(event);
-		if (!sessionLifecycle.isCurrent() || isAgentIdle(ctx)) return;
-		if (!isPeekEnabled()) return;
-		const message = event.message;
-		if (!message || message.role !== "assistant") return;
-		if (peek.phase === "done") return;
-		const parts = collectPeekParts(message.content);
-		const next = reducePeek(peek, parts);
-		const changed = next.phase !== peek.phase || next.tail !== peek.tail;
-		peek.phase = next.phase;
-		peek.tail = next.tail;
-		if (!changed) return;
-		if (peek.phase === "thinking") {
-			peekFrame++;
-			setPeekLabel(ctx);
-		} else if (peek.phase === "done") {
-			setPeekLabel(ctx);
-		}
+		peekController.messageUpdate(event.message, ctx);
 	});
 
 	pi.on("tool_execution_start", (event) => {
@@ -385,16 +295,7 @@ export default function (pi: ExtensionAPI) {
 				editor?.requestRender();
 			}
 		}
-		// Only clear the peek label when this task is still the current one.
-		const settleEpoch = peekTaskEpoch;
-		if (peekSettleTimer) clearTimeout(peekSettleTimer);
-		const settleGeneration = sessionLifecycle.currentGeneration();
-		peekSettleTimer = setTimeout(() => {
-			peekSettleTimer = undefined;
-			if (!sessionLifecycle.isCurrent(settleGeneration) || peekTaskEpoch !== settleEpoch) return;
-			resetPeek();
-			clearPeekLabel(ctx);
-		}, 300);
+		peekController.settled(ctx);
 	});
 
 	pi.on("model_select", (_event, ctx) => {
@@ -409,11 +310,7 @@ export default function (pi: ExtensionAPI) {
 		if (!sessionLifecycle.isCurrent()) return;
 		runOutcome.handle(event, ctx.signal);
 		turnTelemetry.handle(event);
-		if (event.message?.role === "assistant" && peek.phase === "thinking") {
-			// Sub-message finished (answer text or a tool call): freeze the peek line.
-			peek.phase = "done";
-			setPeekLabel(ctx);
-		}
+		peekController.messageEnd(event.message, ctx);
 		invalidateUsageCache();
 		refreshInteractiveState(ctx);
 	});
@@ -436,9 +333,8 @@ export default function (pi: ExtensionAPI) {
 		runOutcome.reset();
 		turnTelemetry.reset();
 		worklineTelemetry = undefined;
-		peekTaskEpoch++;
-		resetPeek();
-		clearPeekLabel(ctx);
+		peekController.startTask();
+		peekController.resetAndClear(ctx);
 		editor?.requestRender();
 		invalidateUsageCache();
 		refreshInteractiveState(ctx);
@@ -449,7 +345,7 @@ export default function (pi: ExtensionAPI) {
 		onConfigChanged: (newConfig) => {
 			const cursorStyleChanged = config.cursorStyle !== newConfig.cursorStyle;
 			const borderStyleChanged = config.editorBorderStyle !== newConfig.editorBorderStyle;
-			const thinkingPeekLinesChanged = config.thinkingPeek.lines !== newConfig.thinkingPeek.lines;
+			const previousPeekLines = config.thinkingPeek.lines;
 			try {
 				saveConfig(newConfig);
 			} catch (error) {
@@ -460,12 +356,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			config = newConfig;
 			editor?.requestRender();
-			if (newConfig.thinkingPeek.lines === 0 || !newConfig.enabled) {
-				resetPeek();
-				clearPeekLabel(lastCtx);
-			} else if (thinkingPeekLinesChanged && peekLabelActive) {
-				setPeekLabel(lastCtx);
-			}
+			peekController.configChanged(previousPeekLines, lastCtx);
 			if (cursorStyleChanged && active && editor) {
 				editor.setCursorStyle(newConfig.cursorStyle);
 			}

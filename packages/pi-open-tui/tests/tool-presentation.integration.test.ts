@@ -12,6 +12,7 @@ import {
 import { type Component, Container, Markdown, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, sliceByColumn, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { codemodeCalls, selectChildren, ToolPresentation } from "../src/tool-presentation.ts";
+import { toolPolicy, compactContent, defaultOutputLines, renderCallSummary, renderChildActivity, expansionHint } from "../src/tool-presentation-policy.ts";
 import openTui from "../src/index.ts";
 import { createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent";
 import { installUserMessageLayout } from "../src/user-message-layout.ts";
@@ -528,6 +529,43 @@ test("live clocks are event-evidenced, isolated and forgotten on session/branch 
 	assert.doesNotMatch(frame(a), /0ms|2\.0s|Took/);
 	f.presentation.shutdown(); f.presentation.start("inactive");
 	assert.doesNotMatch(frame(f.component("read", "inactive", { path: "inactive" })), /\d+(?:ms|s)/);
+});
+
+test("pure preview policy keeps parent output, child evidence and expansion limits independent", () => {
+	const calls = [
+		{ id: "p/0", name: "future", args: "host summary", status: "ok" as const },
+		{ id: "p/1", name: "read", args: "missing", status: "error" as const, error: "caught child" },
+	];
+	for (const call of calls) Object.freeze(call);
+	Object.freeze(calls);
+	const parent = result("Script completed\nWall time 1.2 seconds\nOutput:\nfirst\n\nsecond\nthird\nOUTPUT-END", Object.freeze({ calls }));
+	Object.freeze(parent.content[0]); Object.freeze(parent.content); Object.freeze(parent);
+	const args = Object.freeze({ code: "return 'parent';" });
+	const snapshot = JSON.stringify(parent);
+	const policy = toolPolicy("codemode", args, true, parent);
+	assert.equal(policy.special, true); assert.equal(policy.calls, calls);
+	assert.equal(toolPolicy("codemode", args, false, parent).special, false);
+	assert.equal(toolPolicy("codemode", args, true, result("parent", { calls: [{ status: "error" }] })).special, false);
+	for (let repeat = 0; repeat < 2; repeat++) {
+		assert.deepEqual(compactContent("codemode", true, parent, false, false, calls), { kind: "output", lines: ["first", "second", "third"] });
+		assert.deepEqual(compactContent("codemode", true, parent, true, false, calls), { kind: "output", lines: [] });
+		const activity = stripTerminalSequences(renderChildActivity(calls, hostTheme.theme, "ascii", 100).join("\n"));
+		assert.match(activity, /Observed 2 calls: 1 ok, 1 error/); assert.match(activity, /caught child/);
+		const header = stripTerminalSequences(renderCallSummary({
+			name: "codemode", args, special: true, result: parent, isPartial: false, isError: false,
+			status: "ok", scriptHint: "expand script",
+		}, hostTheme.theme, "ascii", 100).join("\n"));
+		assert.equal(header, "+ ok codemode script", "child error does not change the parent verdict or fabricate timing");
+	}
+	assert.equal(JSON.stringify(parent), snapshot);
+	assert.match(expansionHint([], "EXPAND"), /EXPAND · script, output & host child summaries \(no raw child results\)/);
+	assert.equal(expansionHint(undefined, "EXPAND"), "EXPAND · arguments & result");
+	assert.deepEqual(compactContent("future", false, result("one\ntwo\nthree\nhidden\n\u001b[31mactionable tail\u001b[0m"), false, true, undefined),
+		{ kind: "output", lines: ["one", "two", "three", "actionable tail"] });
+	assert.deepEqual(compactContent("edit", true, result("native edit error", { diff: "diff" }), false, true, undefined), { kind: "native-edit" });
+	assert.deepEqual(compactContent("edit", true, result("edited", { diff: "diff" }), false, false, undefined), { kind: "diff", diff: "diff" });
+	assert.ok(defaultOutputLines(parent, true).includes("OUTPUT-END"));
+	assert.equal(defaultOutputLines(parent, false).at(-1), "More output — expand for details");
 });
 
 test("important overflow remains discoverable and selected rows retain call order", () => {

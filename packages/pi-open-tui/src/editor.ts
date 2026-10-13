@@ -9,8 +9,7 @@ import { CURSOR_MARKER, truncateToWidth, visibleWidth } from "@earendil-works/pi
 import type { CursorStyle, EditorBorderStyle, OpenTuiConfig } from "./config.ts";
 import { findBottomBorderIndex, isEditorBorderLine, stripAnsi } from "./utils.ts";
 import { ThinkingLabelTarget } from "./thinking-label.ts";
-import { installCursorOutput, type CursorOutput } from "./cursor-output.ts";
-import { installUserMessageLayout } from "./user-message-layout.ts";
+import { installHostAdapters } from "./host-adapters.ts";
 
 function fillLine(content: string, width: number): string {
 	const truncated = truncateToWidth(content, Math.max(0, width), "");
@@ -182,7 +181,7 @@ export class OpenTuiEditor extends CustomEditor {
 	private readonly blockHardwareCursor: boolean;
 	private readonly workline: WorklineRenderer | undefined;
 	private detachedWorklineVisible = false;
-	private readonly refreshCursorOutput: (() => void) | undefined;
+	private readonly refreshHostAdapters: (() => void) | undefined;
 
 	constructor(
 		tui: TUI,
@@ -192,7 +191,7 @@ export class OpenTuiEditor extends CustomEditor {
 		inlineFooter?: InlineFooterRenderer,
 		borderStyle: EditorBorderStyle = "surround",
 		workline?: WorklineRenderer,
-		refreshCursorOutput?: () => void,
+		refreshHostAdapters?: () => void,
 	) {
 		super(tui, editorTheme, keybindings, { paddingX: 0 });
 		this.cursorStyle = cursorStyle;
@@ -200,7 +199,7 @@ export class OpenTuiEditor extends CustomEditor {
 		this.inlineFooter = inlineFooter;
 		this.workline = workline;
 		this.blockHardwareCursor = tui.getShowHardwareCursor?.() ?? false;
-		this.refreshCursorOutput = refreshCursorOutput;
+		this.refreshHostAdapters = refreshHostAdapters;
 		configureCursor(tui, cursorStyle);
 		// ponytail: route the frame through this.borderColor so Pi can recolor it
 		// via updateEditorBorderColor() — bash mode ("! " prefix → green) and
@@ -212,7 +211,7 @@ export class OpenTuiEditor extends CustomEditor {
 	override invalidate(): void {
 		// Pi invalidates the remounted tree before the first frame, even when its
 		// transcript-exit mode switch intentionally skips terminal.start().
-		this.refreshCursorOutput?.();
+		this.refreshHostAdapters?.();
 		super.invalidate();
 	}
 
@@ -285,7 +284,7 @@ export class OpenTuiEditor extends CustomEditor {
 	}
 
 	render(width: number): string[] {
-		this.refreshCursorOutput?.();
+		this.refreshHostAdapters?.();
 		const native = this.embeddedWorkingStatusIndicator;
 		const indicator: WorkingStatusIndicator | undefined = this.workline ? {
 			renderInBorder: (budget) => this.workline!.render(budget, native),
@@ -348,8 +347,7 @@ export function installEditor(
 	let currentCursorStyle = cursorStyle;
 	let currentBorderStyle = borderStyle;
 	let thinkingLabel: ThinkingLabelTarget | undefined;
-	let cursorOutput: CursorOutput | undefined;
-	let userMessageLayout: ReturnType<typeof installUserMessageLayout> | undefined;
+	let hostAdapters: ReturnType<typeof installHostAdapters> | undefined;
 	let disposed = false;
 	let warned = false;
 	const warnCursorOutput = () => {
@@ -358,10 +356,8 @@ export function installEditor(
 		ctx.ui.notify?.("open-tui: cursor output adaptation unavailable on this host; using native cursor output", "warning");
 	};
 	const release = () => {
-		userMessageLayout?.cleanup();
-		userMessageLayout = undefined;
-		cursorOutput?.cleanup();
-		cursorOutput = undefined;
+		hostAdapters?.cleanup();
+		hostAdapters = undefined;
 		if (activeTui) {
 			if (currentCursorStyle !== "block") activeTui.terminal.write(DEFAULT_CURSOR_STYLE_SEQUENCE);
 			if (previousHardwareCursor !== undefined) activeTui.setShowHardwareCursor(previousHardwareCursor);
@@ -377,12 +373,12 @@ export function installEditor(
 		activeTui = tui;
 		thinkingLabel = new ThinkingLabelTarget(tui);
 		previousHardwareCursor = tui.getShowHardwareCursor();
-		cursorOutput = installCursorOutput(tui, warnCursorOutput, () => userMessageLayout?.releaseRenderer());
-		if (!cursorOutput) warnCursorOutput();
-		if (userLayout) userMessageLayout = installUserMessageLayout(tui, userLayout.getConfig, () => ctx.ui.theme, userLayout.unavailable, () => cursorOutput?.refresh());
+		hostAdapters = installHostAdapters(tui, warnCursorOutput, userLayout && {
+			...userLayout, getTheme: () => ctx.ui.theme,
+		});
 		try {
 			activeEditor = new OpenTuiEditor(tui, editorTheme, keybindings, currentCursorStyle, inlineFooter, currentBorderStyle, workline,
-				() => { userMessageLayout?.refresh(); cursorOutput?.refresh(); });
+				() => hostAdapters?.refresh());
 			return activeEditor;
 		} catch (error) {
 			release();
@@ -391,7 +387,7 @@ export function installEditor(
 	});
 	return {
 		requestRender(): void {
-			userMessageLayout?.refresh();
+			hostAdapters?.refresh();
 			activeTui?.requestRender();
 		},
 		getViewportWidth(): number | undefined {
