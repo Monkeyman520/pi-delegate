@@ -115,8 +115,8 @@ export default function (pi: ExtensionAPI) {
 				{
 					getConfig: () => config,
 					unavailable: () => ctx.ui.notify(config.settingsLanguage === "zh"
-						? "open-tui：当前宿主不支持紧凑用户消息布局；保留原生用户消息"
-						: "open-tui: compact User message layout unavailable on this host; retaining native User messages", "warning"),
+						? "open-tui：当前宿主不支持紧凑用户／技能消息布局；保留原生消息"
+						: "open-tui: compact User/skill message layout unavailable on this host; retaining native messages", "warning"),
 				},
 			);
 			active = true;

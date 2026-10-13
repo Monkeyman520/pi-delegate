@@ -9,7 +9,7 @@ import {
 	DefaultResourceLoader, ExtensionRunner, SessionManager, SettingsManager, getPackageDir, initTheme, VERSION,
 	type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type ModelRegistry, type ToolInfo, type ToolRenderers, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Container, Markdown, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, sliceByColumn, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
+import { type Component, Container, Markdown, Spacer, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, sliceByColumn, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { codemodeCalls, selectChildren, ToolPresentation } from "../src/tool-presentation.ts";
 import { toolPolicy, compactContent, defaultOutputLines, renderCallSummary, renderChildActivity, expansionHint } from "../src/tool-presentation-policy.ts";
@@ -23,6 +23,7 @@ import { MessageRail } from "../src/message-layout.ts";
 const { ToolExecutionComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/tool-execution.js")).href);
 const hostTheme = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/theme/theme.js")).href);
 const { UserMessageComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/user-message.js")).href);
+const { SkillInvocationMessageComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/skill-invocation-message.js")).href);
 const { AssistantMessageComponent } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/components/assistant-message.js")).href);
 initTheme("dark");
 
@@ -902,6 +903,175 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		assert.deepEqual(warnings, []);
 	});
 }
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: compact skill cards use an accent rail without shell background or vertical padding`, async (t) => {
+		const f = await fixture(t, mode);
+		const block = { name: "demo-skill", content: "first paragraph\n\nsecond paragraph" };
+		const skill = new SkillInvocationMessageComponent(block);
+		const user = new UserMessageComponent("separate user body");
+		const chat = new Container();
+		chat.addChild(skill); chat.addChild(new Spacer(1)); chat.addChild(user);
+		if (f.tui instanceof TuiAltScreen) f.tui.setLayoutRoot(new VStack([new ScrollView(chat, { primary: true })]));
+		else f.tui.addChild(chat);
+		const nativeRender = skill.render;
+		const nativeMouse = skill.handleMouse;
+		const warnings: string[] = [];
+		const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => warnings.push("fallback"));
+		t.after(() => { adapter.cleanup(); initTheme("dark"); });
+		assert.equal(skill.render, nativeRender, "normal mode is not patched");
+		f.config.messageLayout = "compact"; adapter.refresh();
+		for (const theme of ["dark", "light"] as const) {
+			initTheme(theme);
+			for (const icons of ["unicode", "ascii", "nerd"] as const) {
+				f.config.icons.mode = icons;
+				const glyph = icons === "ascii" ? "|" : "┃";
+				const accent = styledRuns(hostTheme.theme.fg("accent", glyph))[0]!.fg;
+				assert.notEqual(accent, styledRuns(hostTheme.theme.fg("userMessageText", glyph))[0]!.fg);
+				for (const expanded of [false, true]) {
+					skill.setExpanded(expanded); skill.invalidate();
+					const native: string[] = nativeRender.call(skill, 78);
+					const children = skill.children;
+					const lines: string[] = skill.render(80);
+					const plain = lines.map(stripTerminalSequences);
+					assert.equal(lines.length, native.length - 2, "removes exactly the shell's top/bottom rows");
+					assert.deepEqual(plain, native.slice(1, -1).map((line: string) => `${glyph} ${stripTerminalSequences(line)}`), "preserves native content and interior gaps");
+					assert.match(plain[0]!, new RegExp(`^[${glyph}]  \\[skill\\]`));
+					assert.ok(plain.at(-1)!.trim() !== glyph, "no trailing shell padding");
+					for (const line of lines) {
+						const runs = styledRuns(line);
+						assert.equal(runs[0]!.text, `${glyph} `);
+						assert.equal(runs[0]!.fg, accent);
+						assert.ok(runs.every((run) => run.bg === "default"), "no full-card background");
+					}
+					assert.equal(skill.children, children, "keeps the actual native MouseRegion/content");
+					if (expanded) assert.ok(plain.some((line) => line.trim() === glyph), "interior paragraph blanks remain");
+					else assert.match(plain[0]!, /demo-skill.*to expand/);
+					for (const width of [0, 1, 2, 3, 4, 7, 12, 22, 80]) {
+						assert.ok(skill.render(width).every((line: string) => visibleWidth(line) <= width), `no overflow at ${width}`);
+					}
+				}
+			}
+		}
+		skill.setExpanded(false); f.config.icons.mode = "unicode";
+		const before: string[] = skill.render(80);
+		skill.setOutputPad(3);
+		assert.deepEqual(skill.render(80), before, "compact inset does not depend on native output padding");
+		assert.equal(skill.paddingX, 3, "does not mutate native padding");
+		assert.equal(skill.paddingY, 1);
+		assert.equal(typeof skill.bgFn, "function");
+		const transcript: string[] = chat.render(80).map(stripTerminalSequences);
+		assert.equal(transcript[before.length], "", "host-owned message gap remains unpainted");
+		assert.deepEqual(block, { name: "demo-skill", content: "first paragraph\n\nsecond paragraph" });
+		f.config.messageLayout = "normal";
+		assert.deepEqual(skill.render(80), nativeRender.call(skill, 80), "immediate normal fallback before scan");
+		adapter.refresh();
+		assert.equal(skill.render, nativeRender); assert.equal(skill.handleMouse, nativeMouse);
+		f.config.messageLayout = "compact"; adapter.refresh();
+		f.config.enabled = false; adapter.refresh();
+		assert.equal(skill.render, nativeRender); assert.equal(skill.handleMouse, nativeMouse);
+		f.config.enabled = true; adapter.refresh();
+		adapter.cleanup(); adapter.cleanup();
+		assert.equal(skill.render, nativeRender); assert.equal(skill.handleMouse, nativeMouse);
+		assert.equal(Object.hasOwn(skill, "render"), false);
+		assert.equal(Object.hasOwn(skill, "handleMouse"), false);
+		assert.deepEqual(warnings, []);
+	});
+
+	test(`${mode}: compact skill cards retain native click/expansion behavior and code whitespace`, async (t) => {
+		const f = await fixture(t, mode);
+		f.config.messageLayout = "compact";
+		const skill = new SkillInvocationMessageComponent({ name: "click-skill", content: "```text\n  indent\n\n  end\n```\n\nlast paragraph" });
+		const chat = new Container(); chat.addChild(skill);
+		if (f.tui instanceof TuiAltScreen) f.tui.setLayoutRoot(new VStack([new ScrollView(chat, { primary: true })]));
+		else f.tui.addChild(chat);
+		const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => assert.fail("unexpected fallback"));
+		t.after(() => adapter.cleanup());
+		const event = { type: "click" as const, button: "left" as const, x: 3, y: 0, screenX: 3, screenY: 0, width: 80, height: 1, shift: false, ctrl: false, alt: false };
+		assert.equal(skill.render(80).length, 1);
+		assert.equal(skill.handleMouse({ ...event, x: 0 }), undefined, "rail is not an expand control");
+		assert.equal(skill.expanded, false);
+		assert.equal(skill.handleMouse(event)!.handled, true);
+		assert.equal(skill.expanded, true);
+		const expanded: string[] = skill.render(80);
+		const native: string[] = SkillInvocationMessageComponent.prototype.render.call(skill, 78);
+		assert.deepEqual(expanded.map(stripTerminalSequences), native.slice(1, -1).map((line: string) => `| ${stripTerminalSequences(line)}`), "code indentation and blank rows survive");
+		assert.equal(skill.handleMouse({ ...event, height: expanded.length })!.handled, true);
+		assert.equal(skill.expanded, false);
+		assert.equal(skill.render(80).length, 1);
+		// The native expansion shortcut calls setExpanded, replacing children before the next frame.
+		skill.setExpanded(true);
+		assert.equal(skill.handleMouse(event)!.handled, true);
+		assert.equal(skill.expanded, false, "clicks route to the replacement native MouseRegion");
+		skill.setExpanded(true); skill.invalidate();
+		assert.match(stripTerminalSequences(skill.render(80).join("\n")), /last paragraph/);
+	});
+}
+
+test("skill adaptation discovers late cards, releases detached cards and falls back on incompatible shells", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	const warnings: string[] = [];
+	const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => warnings.push("fallback"));
+	t.after(() => adapter.cleanup());
+	const skill = new SkillInvocationMessageComponent({ name: "late-skill", content: "body" });
+	const native = skill.render; const mouse = skill.handleMouse;
+	const prototype = SkillInvocationMessageComponent.prototype.render;
+	const sibling = new SkillInvocationMessageComponent({ name: "unmounted", content: "body" });
+	f.tui.addChild(skill); f.tui.start(); f.tui.renderNow(true);
+	assert.notEqual(skill.render, native, "new card discovered by host frame");
+	assert.match(stripTerminalSequences(f.writes()), /\|  \[skill\] late-skill/);
+	assert.equal(sibling.render, native); assert.equal(SkillInvocationMessageComponent.prototype.render, prototype);
+	f.tui.removeChild(skill); adapter.refresh();
+	assert.equal(skill.render, native); assert.equal(skill.handleMouse, mouse);
+	const incompatible = new SkillInvocationMessageComponent({ name: "unsupported", content: "body" });
+	incompatible.children = [new Text("CUSTOM SKILL", 0, 0)];
+	const before = incompatible.render(80);
+	f.tui.addChild(incompatible); adapter.refresh(); adapter.refresh();
+	assert.equal(incompatible.render, native); assert.deepEqual(incompatible.render(80), before);
+	assert.equal(warnings.length, 1, "incompatible shell warns once");
+	f.tui.addChild(skill); adapter.refresh(); skill.render(80);
+	skill.children = [new Text("REPLACEMENT SKILL", 0, 0)];
+	assert.deepEqual(skill.render(80), native.call(skill, 80), "runtime incompatibility also keeps native shell");
+	assert.equal(warnings.length, 1);
+	adapter.cleanup();
+	assert.equal(skill.render, native); assert.equal(skill.handleMouse, mouse);
+});
+
+test("skill adaptation rolls back a partial bind and restores cards across renderer replacement", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	const blocked = new SkillInvocationMessageComponent({ name: "locked-mouse", content: "body" });
+	const native = blocked.render; const mouse = blocked.handleMouse;
+	Object.defineProperty(blocked, "handleMouse", { value: mouse, configurable: false });
+	const oldSkill = new SkillInvocationMessageComponent({ name: "old-renderer", content: "body" });
+	const newSkill = new SkillInvocationMessageComponent({ name: "new-renderer", content: "body" });
+	const { createInteractiveTuiReference } = await import(pathToFileURL(join(getPackageDir(), "dist/modes/interactive/tui-renderer.js")).href);
+	let live = f.tui;
+	const reference = createInteractiveTuiReference(() => live);
+	live.addChild(blocked); live.addChild(oldSkill);
+	const warnings: string[] = [];
+	const adapter = installUserMessageLayout(reference, () => f.config, () => hostTheme.theme, () => warnings.push("fallback"));
+	t.after(() => { adapter.cleanup(); live.stop(); });
+	assert.equal(blocked.render, native, "failed mouse patch rolls back the render patch");
+	assert.equal(Object.hasOwn(blocked, "render"), false);
+	assert.equal(blocked.handleMouse, mouse); assert.equal(warnings.length, 1);
+	assert.notEqual(oldSkill.render, native, "other cards remain adaptable");
+	oldSkill.render(80);
+	const old = live;
+	live = new TuiAltScreen(f.terminal);
+	live.setLayoutRoot(new VStack([new ScrollView(new VStack([newSkill]), { primary: true })]));
+	adapter.refresh();
+	assert.equal(oldSkill.render, native); assert.equal(oldSkill.handleMouse, mouse);
+	assert.notEqual(newSkill.render, native);
+	assert.equal(newSkill.render(80).length, 1);
+	assert.equal(SkillInvocationMessageComponent.prototype.render, native);
+	adapter.cleanup();
+	assert.equal(newSkill.render, native); assert.equal(newSkill.handleMouse, mouse);
+	assert.equal(Object.hasOwn(newSkill, "render"), false);
+	assert.equal(Object.hasOwn(newSkill, "handleMouse"), false);
+	old.stop();
+});
 
 test("User adaptation preserves native Markdown transforms, code whitespace, themes and rebuilds", async (t) => {
 	const f = await fixture(t);
