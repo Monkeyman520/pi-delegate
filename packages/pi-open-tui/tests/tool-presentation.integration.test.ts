@@ -242,6 +242,59 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		assert.doesNotMatch(frame(card), /\+ ok read/);
 		assert.equal(JSON.stringify({ args, value }), original);
 	});
+	test(`${mode}: compact layout hides successful output across native, generic and specialized tools`, async (t) => {
+		const f = await fixture(t, mode);
+		const specialized: ToolRenderers = {
+			renderCall: () => new Text("SPECIAL-CALL", 0, 0),
+			renderResult: () => new Text("SPECIAL-RESULT", 0, 0),
+		};
+		const broken: ToolRenderers = { renderResult() { throw new Error("renderer failed"); } };
+		const cases: Array<{ name: string; args: unknown; base?: ToolRenderers; diff?: boolean }> = [
+			{ name: "read", args: { path: "file.txt" } },
+			{ name: "bash", args: { command: "some-command" } },
+			{ name: "edit", args: { path: "file.txt", edits: [{ oldText: "old", newText: "new" }] }, diff: true },
+			{ name: "future_tool", args: {} },
+			{ name: "mcp__specialized", args: {}, base: specialized },
+			{ name: "broken_renderer", args: {}, base: broken },
+		];
+		for (const { name, args, base, diff } of cases) {
+			f.config.messageLayout = "normal";
+			const value = result("SUCCESS-FIRST\nSUCCESS-SECOND\nSUCCESS-THIRD\nSUCCESS-END",
+				diff ? { diff: "-1 DIFF-OLD\n+1 DIFF-NEW", firstChangedLine: 1 } : undefined, false, 250);
+			const snapshot = JSON.stringify({ args, value });
+			const card = f.component(name, name, args, base);
+			card.updateResult(value);
+			const normal = frame(card);
+			assert.match(normal, /SUCCESS-FIRST/, "normal layout retains the output summary");
+			f.config.messageLayout = "compact";
+			for (const width of [22, 100, 500]) {
+				const compact = frame(card, width);
+				assert.doesNotMatch(compact, /SUCCESS-|SPECIAL-RESULT|DIFF-OLD|DIFF-NEW/, `${name}: no successful output, including header summary`);
+			}
+			assert.ok(frame(card).includes(`ok ${name}`));
+			assert.match(frame(card), /250ms/);
+			card.setExpanded(true);
+			assert.match(frame(card), diff ? /DIFF-NEW/ : /SUCCESS-END/, `${name}: details remain recoverable`);
+			if (base === specialized) assert.match(frame(card), /SPECIAL-RESULT/);
+			card.setExpanded(false);
+			assert.doesNotMatch(frame(card), /SUCCESS-|SPECIAL-RESULT|DIFF-NEW/);
+			f.config.messageLayout = "normal";
+			assert.equal(frame(card), normal, "live layout toggle restores the original presentation");
+			f.config.messageLayout = "compact";
+			f.config.toolPresentation = false;
+			card.setExpanded(true); // Native read intentionally hides successful content while collapsed.
+			assert.match(frame(card), base === specialized ? /SPECIAL-RESULT/ : diff ? /DIFF-NEW/ : /SUCCESS-FIRST/, "native escape hatch remains available");
+			f.config.toolPresentation = true;
+			f.config.enabled = false;
+			assert.match(frame(card), base === specialized ? /SPECIAL-RESULT/ : diff ? /DIFF-NEW/ : /SUCCESS-FIRST/);
+			f.config.enabled = true;
+			card.setExpanded(false);
+			assert.equal(JSON.stringify({ args, value }), snapshot, "presentation never mutates model-facing content");
+			card.updateResult(result("permission denied\n" + "earlier output\n".repeat(10) + "failure-tail", undefined, true));
+			assert.match(frame(card), /permission denied/);
+			assert.match(frame(card), /failure-tail/);
+		}
+	});
 }
 
 test("host error evidence, tail notices/paths, edit diff and image controls survive", async (t) => {
@@ -261,9 +314,11 @@ test("host error evidence, tail notices/paths, edit diff and image controls surv
 	assert.match(frame(bash), /Command exited with code 1/);
 	const edit = f.component("edit", "edit", { path: "a.txt", edits: [{ oldText: "old", newText: "new" }] });
 	edit.updateResult(result("Successfully replaced", { diff: "-1 old\n+1 new", firstChangedLine: 1 }));
+	assert.doesNotMatch(frame(edit), /old|new|Successfully replaced/);
+	edit.setExpanded(true);
 	assert.match(frame(edit), /old/); assert.match(frame(edit), /new/);
-	edit.setExpanded(true); frame(edit); edit.setExpanded(false);
-	assert.match(frame(edit), /new/, "diff remains after expand/collapse");
+	edit.setExpanded(false);
+	assert.doesNotMatch(frame(edit), /old|new|Successfully replaced/, "collapse hides the successful diff again");
 	const image = f.component("read", "image", { path: "a.png" });
 	const content = { content: [{ type: "image", data: "fixture", mimeType: "image/png" }], details: undefined, isError: false };
 	image.updateResult(content);
@@ -297,11 +352,15 @@ test("codemode prioritizes ordered child activity, retains independent parent ou
 	assert.match(compact, /\+ ok codemode/); assert.match(compact, /1\.5s/);
 	assert.match(compact, /1 error/); assert.match(compact, /count: 2/);
 	assert.match(compact, /parent-output.txt/);
+	f.config.messageLayout = "compact";
+	assert.doesNotMatch(frame(card), /count: 2|parent-end/);
+	assert.match(frame(card), /child permission denied/);
+	assert.match(frame(card), /cancelled/); assert.match(frame(card), /parent-output.txt/);
 	card.setExpanded(true);
 	const expanded = frame(card);
 	assert.match(expanded, /script-end/); assert.match(expanded, /parent-end/);
 	assert.match(expanded, /tool-7/); assert.match(expanded, /host summaries/);
-	assert.match(expanded, /raw child results are not\s+retained/);
+	assert.match(expanded.replace(/\n\| /g, "\n"), /raw child results are not\s+retained/);
 	card.setExpanded(false);
 	card.updateResult(result("partial output\n" + "before\n".repeat(8) + "Script error: failed after write", { calls }, true));
 	assert.match(frame(card), /x error codemode/); assert.match(frame(card), /partial output/);
@@ -462,12 +521,14 @@ for (const renderShell of ["default", "self"] as const) for (const messageLayout
 			card.setExpanded(expanded);
 			const rendered = frame(card);
 			assert.match(rendered, /ok mcp__interactive__widget/);
-			assert.match(rendered, /CALL CONTROL/); assert.match(rendered, /IMPORTANT METADATA/);
+			assert.match(rendered, /CALL CONTROL/);
+			if (messageLayout === "compact" && !expanded) assert.doesNotMatch(rendered, /IMPORTANT METADATA/);
+			else assert.match(rendered, /IMPORTANT METADATA/);
 			if (expanded) {
 				assert.match(rendered, /ARGUMENT-END/); assert.match(rendered, /OUTPUT-END/);
 			} else assert.doesNotMatch(rendered, /ARGUMENT-END|OUTPUT-END/);
 			const lines = card.render(100);
-			for (const label of ["CALL CONTROL", "RESULT CONTROL"]) {
+			for (const label of messageLayout === "compact" && !expanded ? ["CALL CONTROL"] : ["CALL CONTROL", "RESULT CONTROL"]) {
 				const y = lines.findIndex((line: string) => stripTerminalSequences(line).includes(label));
 				assert.ok(y >= 0);
 				const handled = card.handleMouse({ type: "click", button: "left", x: messageLayout === "compact" ? 3 : 1, y, screenX: 1, screenY: y, width: 100, height: lines.length, shift: false, ctrl: false, alt: false }) as { handled?: boolean; focus?: boolean; focusTarget?: Component; target: { component: Component } };
@@ -480,7 +541,8 @@ for (const renderShell of ["default", "self"] as const) for (const messageLayout
 			}
 			card.invalidate(); frame(card, 22);
 		}
-		assert.equal(clicks, 6); assert.equal(keys.length, 6); assert.ok(invalidations > 0);
+		const expectedClicks = messageLayout === "compact" ? 4 : 6;
+		assert.equal(clicks, expectedClicks); assert.equal(keys.length, expectedClicks); assert.ok(invalidations > 0);
 		assert.ok(seenLast.includes(callControl) && seenLast.includes(resultControl));
 		assert.ok(sharedStates.every((state) => state === sharedStates[0]));
 		f.config.toolPresentation = false;
@@ -812,7 +874,8 @@ for (const mode of ["regular", "fullscreen"] as const) {
 		const compactTool = first.render(80).map(stripTerminalSequences);
 		assert.equal(compactTool[0], "", "host-owned gap is unpainted");
 		assert.ok(compactTool.slice(1).every((line: string) => line.startsWith("┃ ")));
-		assert.equal(normalTool.length - compactTool.length, 2, "remove only outer vertical tool padding");
+		assert.equal(normalTool.length - compactTool.length, 3, "remove outer tool padding and successful output preview");
+		assert.doesNotMatch(compactTool.join("\n"), /file output/);
 		assert.deepEqual(assistant.render(80), assistantBefore);
 		assert.equal(assistant.render, nativeAssistant);
 		const lines: string[] = chat.render(80).map(stripTerminalSequences);

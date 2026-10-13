@@ -106,12 +106,12 @@ function statusText(status: Status, theme: Theme, icons: IconMode): string {
 	return theme.fg(statusColor(status), `${icon} ${status}`);
 }
 export function renderCallSummary(input: {
-	name: string; args: unknown; special: boolean; result?: Result;
+	name: string; args: unknown; special: boolean; result?: Result; hideOutput?: boolean;
 	isPartial: boolean; isError: boolean; status: Status; elapsedMs?: number; scriptHint: string;
 }, theme: Theme, icons: IconMode, width: number): string[] {
 	const { name, args, special, result, isPartial, isError, status, elapsedMs, scriptHint } = input;
 	const value = special ? target(name, args)! : argumentsText(args);
-	const summary = !(special && name === "codemode") && result && !isPartial
+	const summary = !input.hideOutput && !(special && name === "codemode") && result && !isPartial
 		? clean(textOutput(result).split("\n").find((line) => line.trim()) ?? "") : "";
 	const time = duration(elapsedMs);
 	const title = `${statusText(status, theme, icons)} ${theme.fg("toolTitle", clean(name))}${value ? ` ${theme.bold(theme.fg("accent", clean(value)))}` : ""}`;

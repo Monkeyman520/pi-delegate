@@ -165,6 +165,13 @@ export class ToolPresentation {
 					...(recognized ? this.nativeContext(name, context, state) : context), lastComponent: state.nativeCall,
 				});
 			} catch { state.nativeCall = undefined; } // Preserve the host's renderer-callback fallback.
+			if (recognized && name === "edit" && context.expanded && this.getConfig().messageLayout === "compact" && state.result && base.renderResult) {
+				// Native edit results populate the call-owned diff. Synchronize it before
+				// drawing the first expanded frame after the successful preview was hidden.
+				try {
+					this.nativeResult(name, base, state.result, { expanded: true, isPartial: context.isPartial }, theme, context, state);
+				} catch { state.nativeResult = undefined; }
+			}
 			return state.nativeCall ?? new Text(`${theme.fg("toolTitle", theme.bold(clean(name)))}\n${argumentsText(args, context.expanded || !this.enhanced())}`, 0, 0);
 		};
 		const defaultResult = (result: Result, options: Parameters<NonNullable<ToolRenderers["renderResult"]>>[1], theme: Theme, context: ToolRenderContext): Component => {
@@ -205,6 +212,7 @@ export class ToolPresentation {
 								name, args, special, result: state.result,
 								isPartial: context.isPartial, isError: context.isError, status: this.status(context),
 								elapsedMs: this.elapsed(context, state),
+								hideOutput: this.getConfig().messageLayout === "compact" && !context.expanded && !context.isError,
 								scriptHint: special && name === "codemode" && !state.result ? host.keyHint("app.tools.expand", "to expand script") : "",
 							}, theme, this.getConfig().icons.mode, width);
 						},
@@ -226,14 +234,16 @@ export class ToolPresentation {
 							? [defaultResult(result, options, theme, context)] : [];
 						return [...(note ? [note] : []), ...raw, renderResult(result, options, theme, context, state)];
 					}
+					const hideOutput = this.getConfig().messageLayout === "compact" && !options.isPartial && !context.isError;
 					const body: Component[] = [];
 					// Preserve a third-party renderer's own compact presentation and actual controls.
-					if (!special && base.renderResult) body.push(renderResult(result, options, theme, context, state));
+					if (!hideOutput && !special && base.renderResult) body.push(renderResult(result, options, theme, context, state));
 					const preview: Component = {
 						invalidate() {},
 						render: (width) => {
 							const lines = renderChildActivity(calls, theme, this.getConfig().icons.mode, width);
-							const content = compactContent(name, special, result, options.isPartial, context.isError, calls);
+							const content = hideOutput ? { kind: "output" as const, lines: [] }
+								: compactContent(name, special, result, options.isPartial, context.isError, calls);
 							if (content.kind === "diff") {
 								const diff = new Text(host.renderDiff(content.diff), 0, 0).render(width);
 								lines.push(...compactDiffLines(diff, theme));
