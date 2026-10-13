@@ -5,7 +5,7 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, type EditorTheme, type Terminal, type TUI } from "@earendil-works/pi-tui";
 import type { CursorStyle } from "../src/config.ts";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { LEGACY_DEFAULT_CONFIG as DEFAULT_CONFIG } from "../src/config.ts";
 import { installEditor, type OpenTuiEditor } from "../src/editor.ts";
 import { createWorklineRenderer } from "../src/workline.ts";
 

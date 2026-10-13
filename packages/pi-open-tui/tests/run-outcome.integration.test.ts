@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentBeforeSettleEvent, ExtensionAPI, ExtensionContext, ExtensionEvent, Theme } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { LEGACY_DEFAULT_CONFIG as DEFAULT_CONFIG } from "../src/config.ts";
 import type { OpenTuiEditor } from "../src/editor.ts";
 import { resolveGlyphs } from "../src/icons.ts";
 import openTui from "../src/index.ts";

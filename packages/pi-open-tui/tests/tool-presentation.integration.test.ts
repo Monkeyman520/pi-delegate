@@ -10,13 +10,13 @@ import {
 	type ExtensionAPI, type ExtensionContext, type ExtensionToolContext, type ModelRegistry, type ToolInfo, type ToolRenderers, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Container, Markdown, Spacer, ScrollView, VStack, Text, TuiMainScreen, TuiAltScreen, sliceByColumn, stripTerminalSequences, visibleWidth, type Terminal } from "@earendil-works/pi-tui";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { LEGACY_DEFAULT_CONFIG as DEFAULT_CONFIG, DEFAULT_CONFIG as NEW_DEFAULT_CONFIG, DEFAULT_USER_BORDER } from "../src/config.ts";
 import { codemodeCalls, selectChildren, ToolPresentation } from "../src/tool-presentation.ts";
 import { toolPolicy, compactContent, defaultOutputLines, renderCallSummary, renderChildActivity, expansionHint } from "../src/tool-presentation-policy.ts";
 import openTui from "../src/index.ts";
 import { createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent";
 import { installUserMessageLayout } from "../src/user-message-layout.ts";
-import { MessageRail, ToolBoxFrame, resolveBorderGlyphs } from "../src/message-layout.ts";
+import { MessageRail, ToolBoxFrame, resolveBorderGlyphs, borderFrameOptions } from "../src/message-layout.ts";
 
 // Actual upgraded host registration, resolver chain and ToolExecutionComponent, with controlled
 // results and an in-memory terminal. No provider, real terminal/font or IME visual claims.
@@ -1173,15 +1173,17 @@ test("message rail preserves opaque image rows and routes child coordinates, foc
 	assert.equal(rail.handleMouse({ ...event, x: 0 }), undefined);
 });
 
-test("resolveBorderGlyphs returns correct glyph sets across styles and ascii modes", () => {
-	assert.deepEqual(resolveBorderGlyphs("single", false), { top: "─", topLeft: "┌", left: "│", bottom: "─", bottomLeft: "└" });
-	assert.deepEqual(resolveBorderGlyphs("bold", false), { top: "━", topLeft: "┏", left: "┃", bottom: "━", bottomLeft: "┗" });
-	assert.deepEqual(resolveBorderGlyphs("double", false), { top: "═", topLeft: "╔", left: "║", bottom: "═", bottomLeft: "╚" });
-	assert.deepEqual(resolveBorderGlyphs("dashed", false), { top: "┄", topLeft: "┌", left: "┆", bottom: "┄", bottomLeft: "└" });
-	assert.deepEqual(resolveBorderGlyphs("single", true), { top: "-", topLeft: "+", left: "|", bottom: "-", bottomLeft: "+" });
-	assert.deepEqual(resolveBorderGlyphs("bold", true), { top: "=", topLeft: "+", left: "|", bottom: "=", bottomLeft: "+" });
-	assert.deepEqual(resolveBorderGlyphs("double", true), { top: "=", topLeft: "+", left: "|", bottom: "=", bottomLeft: "+" });
-	assert.deepEqual(resolveBorderGlyphs("dashed", true), { top: "-", topLeft: "+", left: "|", bottom: "-", bottomLeft: "+" });
+test("resolveBorderGlyphs includes matching right edges and corners for every preset", () => {
+	for (const [style, top, left, tl, bl, tr, br] of [
+		["single", "─", "│", "┌", "└", "┐", "┘"],
+		["bold", "━", "┃", "┏", "┗", "┓", "┛"],
+		["double", "═", "║", "╔", "╚", "╗", "╝"],
+		["dashed", "┄", "┆", "┌", "└", "┐", "┘"],
+	] as const) {
+		assert.deepEqual(resolveBorderGlyphs(style, false), { top, bottom: top, left, right: left, topLeft: tl, bottomLeft: bl, topRight: tr, bottomRight: br });
+		const h = style === "bold" || style === "double" ? "=" : "-";
+		assert.deepEqual(resolveBorderGlyphs(style, true), { top: h, bottom: h, left: "|", right: "|", topLeft: "+", bottomLeft: "+", topRight: "+", bottomRight: "+" });
+	}
 });
 
 test("ToolBoxFrame renders 3-sided open box, handles edge toggles, and routes mouse events", () => {
@@ -1314,4 +1316,107 @@ test("tool execution renders configurable box borders across styles, edge toggle
 	assert.match(asciiText, /^\+-+/m);
 	assert.match(asciiText, /\|\s+/m);
 	assert.match(asciiText, /^\+-+/m);
+});
+
+test("four-edge frames preserve images, align columns, and route only body clicks", () => {
+	const image = "\x1b_Gpayload\x1b\\";
+	const events: Array<{ x: number; y: number; width: number }> = [];
+	const child: Component = { render: () => ["界 é 👩‍💻", image, "short"], invalidate() {}, handleMouse(event) { events.push(event); return { handled: true, focus: true }; } };
+	for (let mask = 0; mask < 16; mask++) {
+		const border = { ...structuredClone(DEFAULT_USER_BORDER), enabled: true, style: "double" as const,
+			top: { enabled: !!(mask & 1) }, bottom: { enabled: !!(mask & 2) },
+			left: { enabled: !!(mask & 4) }, right: { enabled: !!(mask & 8) } };
+		const frame = new ToolBoxFrame(child, borderFrameOptions(border, false, (s) => s));
+		for (const width of [0, 1, 2, 3, 4, 5, 12, 40]) {
+			const lines = frame.render(width);
+			assert.ok(lines.every((line) => line === image || visibleWidth(line) <= width), `${mask}/${width}`);
+			if (width >= 5 && border.right.enabled) for (const line of lines) {
+				if (line !== image) assert.equal(visibleWidth(line), width, "right edge stays at the frame width");
+			}
+			if (width) assert.ok(lines.includes(image), "opaque image payload is untouched");
+		}
+	}
+	const border = { ...structuredClone(DEFAULT_USER_BORDER), enabled: true, top: { enabled: true }, bottom: { enabled: true }, right: { enabled: true, char: "#" } };
+	const frame = new ToolBoxFrame(child, borderFrameOptions(border, false, (s) => s));
+	const lines = frame.render(20);
+	assert.ok(lines[1]!.endsWith("#")); assert.equal(lines[2], image);
+	const event = { type: "click" as const, button: "left" as const, x: 5, y: 1, screenX: 5, screenY: 1, width: 20, height: lines.length, shift: false, ctrl: false, alt: false };
+	assert.equal(frame.handleMouse({ ...event, y: 0 }), undefined);
+	assert.equal(frame.handleMouse({ ...event, y: lines.length - 1 }), undefined);
+	assert.equal(frame.handleMouse({ ...event, x: 19 }), undefined);
+	assert.equal(frame.handleMouse({ ...event, x: 0 }), undefined);
+	assert.equal(frame.handleMouse(event)!.handled, true);
+	assert.deepEqual(events.at(-1), { ...event, x: 3, y: 0, width: 16, height: 3 });
+});
+
+for (const mode of ["regular", "fullscreen"] as const) {
+	test(`${mode}: independent User/Skill frames retain interactions and do not control Tool output`, async (t) => {
+		const f = await fixture(t, mode);
+		Object.assign(f.config, structuredClone(NEW_DEFAULT_CONFIG));
+		f.config.icons.mode = "unicode";
+		const user = new UserMessageComponent("中文 body\n\n```text\n  whitespace\n```");
+		const skill = new SkillInvocationMessageComponent({ name: "framed-skill", content: "first\n\n```text\n  skill code\n```" });
+		const chat = new Container(); chat.addChild(user); chat.addChild(skill);
+		if (f.tui instanceof TuiAltScreen) f.tui.setLayoutRoot(new VStack([new ScrollView(chat, { primary: true })]));
+		else f.tui.addChild(chat);
+		const nativeUser = user.render; const nativeSkill = skill.render;
+		const adapter = installUserMessageLayout(f.tui, () => f.config, () => hostTheme.theme, () => assert.fail("unexpected fallback"));
+		t.after(() => adapter.cleanup());
+		const tool = f.component("read", "independent-output", { path: "file" });
+		tool.updateResult(result("SUCCESS PREVIEW"));
+		assert.doesNotMatch(frame(tool), /SUCCESS PREVIEW/);
+		const toolBefore = tool.render(60);
+		assert.match(stripTerminalSequences(user.render(60).join("\n")), /^┃/);
+		assert.match(stripTerminalSequences(skill.render(60).join("\n")), /^┃/);
+		f.config.userMessageLayout = "normal"; adapter.refresh();
+		assert.equal(user.render, nativeUser); assert.equal(skill.render, nativeSkill);
+		assert.deepEqual(tool.render(60), toolBefore, "User selection must not reveal Tool previews or change its rail");
+		f.config.userBoxBorder = { ...structuredClone(DEFAULT_USER_BORDER), enabled: true, style: "double", top: { enabled: true }, bottom: { enabled: true }, right: { enabled: true } };
+		adapter.refresh();
+		for (const width of [5, 12, 60]) for (const component of [user, skill]) {
+			const lines: string[] = component.render(width);
+			assert.ok(lines.every((line) => visibleWidth(line) === width));
+			assert.match(stripTerminalSequences(lines[0]!), /^╔═*╗$/);
+			assert.match(stripTerminalSequences(lines.at(-1)!), /^╚═*╝$/);
+		}
+		const event = { type: "click" as const, button: "left" as const, x: 3, y: 1, screenX: 3, screenY: 1, width: 60, height: skill.render(60).length, shift: false, ctrl: false, alt: false };
+		assert.equal(skill.handleMouse({ ...event, x: 59 }), undefined); assert.equal(skill.expanded, false);
+		assert.equal(skill.handleMouse(event)!.handled, true); assert.equal(skill.expanded, true);
+		assert.match(stripTerminalSequences(skill.render(60).join("\n")), /skill code/);
+		skill.setExpanded(false); // Replaces MouseRegion before the next frame.
+		assert.equal(skill.handleMouse(event)!.handled, true); assert.equal(skill.expanded, true);
+		const userBefore = user.render(60); const skillBefore = skill.render(60);
+		f.config.toolMessageLayout = "normal";
+		assert.match(frame(tool), /SUCCESS PREVIEW/, "Tool preview uses only its own layout");
+		f.config.toolBoxBorder.enabled = true; f.config.toolBoxBorder.right = { enabled: true }; f.config.toolBoxBorder.bottom.enabled = true;
+		const plain = stripTerminalSequences(tool.render(60).join("\n")).split("\n").filter((line) => line);
+		assert.equal(plain.filter((line) => line.startsWith("╔")).length, 1);
+		assert.equal(plain.filter((line) => line.startsWith("╚")).length, 1);
+		assert.ok(plain.every((line) => visibleWidth(line) === 60));
+		assert.deepEqual(user.render(60), userBefore); assert.deepEqual(skill.render(60), skillBefore);
+		f.config.userBoxBorder.colorMode = "static"; f.config.userBoxBorder.color = "accent";
+		const accent = styledRuns(hostTheme.theme.fg("accent", "║"))[0]!.fg;
+		assert.equal(styledRuns(user.render(60)[1]!)[0]!.fg, accent);
+		f.config.enabled = false; adapter.refresh();
+		assert.equal(user.render, nativeUser); assert.equal(skill.render, nativeSkill);
+	});
+}
+
+test("Tool rail colors are configurable without activating a frame and legacy dormant colors stay inactive", async (t) => {
+	const f = await fixture(t);
+	f.config.messageLayout = "compact";
+	f.config.icons.mode = "unicode";
+	f.config.toolBoxBorder.colorMode = "static";
+	f.config.toolBoxBorder.color = "accent";
+	const tool = f.component("read", "rail-color", { path: "file" });
+	tool.updateResult(result("SUCCESS"));
+	const railColor = () => styledRuns(tool.render(60).find((line: string) => stripTerminalSequences(line).startsWith("┃"))!)[0]!.fg;
+	const success = styledRuns(hostTheme.theme.fg("success", "┃"))[0]!.fg;
+	const accent = styledRuns(hostTheme.theme.fg("accent", "┃"))[0]!.fg;
+	assert.equal(railColor(), success, "a legacy disabled box retains its status rail");
+	f.config.toolMessageLayout = "compact";
+	assert.equal(railColor(), accent, "independent Tool colors affect the selected rail");
+	assert.equal(f.config.toolBoxBorder.enabled, false);
+	f.config.toolBoxBorder.colorMode = "status";
+	assert.equal(railColor(), success);
 });

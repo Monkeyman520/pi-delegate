@@ -11,7 +11,8 @@ import {
 	Text,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { CursorStyle, IconMode, OpenTuiConfig, SettingsLanguage, ThinkingPeekLines, ToolBoxBorderStyle } from "./config.ts";
+import { getUserBoxBorder, getUserMessageLayout, getToolMessageLayout, type CursorStyle, type IconMode, type OpenTuiConfig, type SettingsLanguage, type ThinkingPeekLines, type ToolBoxBorderConfig, type ToolBoxBorderStyle, type UserBoxBorderConfig } from "./config.ts";
+import { resolveBorderGlyphs } from "./message-layout.ts";
 
 interface SettingItem {
 	id: string;
@@ -19,14 +20,15 @@ interface SettingItem {
 	currentValue: string;
 }
 
-type Tab = "features" | "icons" | "segments" | "telemetry" | "toolBorder";
+type Tab = "features" | "icons" | "segments" | "telemetry" | "toolBorder" | "userBorder";
 
-const TABS: Tab[] = ["features", "icons", "segments", "telemetry", "toolBorder"];
+const TABS: Tab[] = ["features", "icons", "segments", "telemetry", "toolBorder", "userBorder"];
 
 const COPY = {
 	en: {
 		title: "Open TUI Settings",
-		tabs: { features: "General", icons: "Appearance", segments: "Footer", telemetry: "Telemetry", toolBorder: "Tool borders" },
+		tabs: { features: "General", icons: "Appearance", segments: "Footer", telemetry: "Telemetry", toolBorder: "Tools", userBorder: "User / Skill" },
+		scope: { toolBorder: "Enhanced presentation adds summaries and details. Compression reduces spacing and hides successful previews when enhanced. Border style is independent; Off hides border options.", userBorder: "Applies to User messages and Skill cards; preserves Skill expansion. Off restores native presentation and hides all styling options." },
 		hint: "Tab/Shift+Tab/←/→: tabs · ↑/↓: move · Enter/Space: change · Esc/q: close",
 		editHint: "Enter: save · Esc: cancel · Empty: reset to default",
 		charHint: "One visible column, e.g. ─, │, #",
@@ -37,11 +39,11 @@ const COPY = {
 			enabled: "Enabled",
 			inlineFooter: "Inline footer",
 			thinkingPeek: "Thinking peek",
-			toolPresentation: "Compact tool presentation",
+			toolPresentation: "Enhanced presentation",
 			language: "Language",
 			cursorStyle: "Cursor style",
 			editorBorderStyle: "Editor border",
-			messageLayout: "Message layout",
+			messageLayout: "Compression",
 			worklineMarquee: "Workline marquee",
 			worklineAttachToBorder: "Workline attached to border",
 			iconMode: "Icon mode",
@@ -61,7 +63,6 @@ const COPY = {
 			tokenCounts: "Token counts",
 			stallDetails: "Stall details",
 			costRate: "Cost rate",
-			toolBoxBorder: "Tool box borders",
 			borderStyle: "Border style",
 			borderColorMode: "Color mode",
 			borderColor: "Static color (theme token)",
@@ -71,6 +72,7 @@ const COPY = {
 			topChar: "Top symbol",
 			bottomChar: "Bottom symbol",
 			leftChar: "Left symbol",
+			right: "Right border", rightChar: "Right symbol",
 		},
 		values: {
 			on: "On",
@@ -79,16 +81,16 @@ const COPY = {
 			languages: { en: "English", zh: "简体中文" },
 			cursorStyles: { block: "Block", bar: "Bar", underline: "Underline" },
 			editorBorderStyles: { surround: "Surround", minimal: "Minimal" },
-			messageLayouts: { normal: "Normal", compact: "Compact" },
 			icons: { auto: "Auto", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
 			borderStyles: { single: "Single", bold: "Bold", double: "Double", dashed: "Dashed", custom: "Custom" },
-			borderColorModes: { status: "Status", static: "Static" },
+			borderColorModes: { status: "Execution status", static: "Fixed color", theme: "Theme" },
 			default: "Default",
 		},
 	},
 	zh: {
 		title: "Open TUI 设置",
-		tabs: { features: "常规", icons: "外观", segments: "Footer", telemetry: "遥测", toolBorder: "工具边框" },
+		tabs: { features: "常规", icons: "外观", segments: "Footer", telemetry: "遥测", toolBorder: "工具卡片", userBorder: "用户 / Skill" },
+		scope: { toolBorder: "增强展示提供摘要和详情；压缩展示减少留白，并在增强模式下隐藏成功预览。边框样式独立，关闭时隐藏边框选项。", userBorder: "同时影响用户消息和 Skill 卡片，保留 Skill 展开交互。关闭时恢复原生展示并隐藏全部样式选项。" },
 		hint: "Tab/Shift+Tab/←/→：切页 · ↑/↓：移动 · Enter/Space：更改 · Esc/q：关闭",
 		editHint: "Enter：保存 · Esc：取消 · 留空：恢复默认",
 		charHint: "单列宽度符号，例如 ─、│、#",
@@ -99,11 +101,11 @@ const COPY = {
 			enabled: "启用",
 			inlineFooter: "内联底栏",
 			thinkingPeek: "思考预览",
-			toolPresentation: "紧凑工具展示",
+			toolPresentation: "增强展示",
 			language: "语言",
 			cursorStyle: "光标样式",
 			editorBorderStyle: "编辑器边框",
-			messageLayout: "消息布局",
+			messageLayout: "压缩展示",
 			worklineMarquee: "Workline 跑马灯",
 			worklineAttachToBorder: "Workline 贴合边框",
 			iconMode: "图标模式",
@@ -123,7 +125,6 @@ const COPY = {
 			tokenCounts: "Token 数量",
 			stallDetails: "停顿详情",
 			costRate: "费用速率",
-			toolBoxBorder: "工具卡片边框",
 			borderStyle: "边框样式",
 			borderColorMode: "配色模式",
 			borderColor: "固定颜色（主题标记）",
@@ -133,6 +134,7 @@ const COPY = {
 			topChar: "上边框符号",
 			bottomChar: "下边框符号",
 			leftChar: "左边框符号",
+			right: "右边框", rightChar: "右边框符号",
 		},
 		values: {
 			on: "开启",
@@ -141,10 +143,9 @@ const COPY = {
 			languages: { en: "English", zh: "简体中文" },
 			cursorStyles: { block: "块", bar: "竖线", underline: "下划线" },
 			editorBorderStyles: { surround: "环绕", minimal: "简洁" },
-			messageLayouts: { normal: "常规", compact: "紧凑" },
 			icons: { auto: "自动", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
 			borderStyles: { single: "单线", bold: "粗线", double: "双线", dashed: "虚线", custom: "自定义" },
-			borderColorModes: { status: "状态配色", static: "固定配色" },
+			borderColorModes: { status: "跟随执行状态", static: "固定配色", theme: "跟随主题" },
 			default: "默认",
 		},
 	},
@@ -211,7 +212,6 @@ function buildFeaturesItems(config: OpenTuiConfig, copy: SettingsCopy): SettingI
 		{ id: "settingsLanguage", label: copy.labels.language, currentValue: copy.values.languages[config.settingsLanguage] },
 		{ id: "thinkingPeek", label: copy.labels.thinkingPeek, currentValue: formatThinkingPeekLines(config.thinkingPeek.lines, copy) },
 		{ id: "inlineFooter", label: copy.labels.inlineFooter, currentValue: flag(config.inlineFooter) },
-		{ id: "toolPresentation", label: copy.labels.toolPresentation, currentValue: flag(config.toolPresentation) },
 	];
 }
 
@@ -223,7 +223,6 @@ function buildIconsItems(config: OpenTuiConfig, copy: SettingsCopy): SettingItem
 		{ id: "editorBorderStyle", label: copy.labels.editorBorderStyle, currentValue: copy.values.editorBorderStyles[config.editorBorderStyle] },
 		{ id: "worklineMarquee", label: copy.labels.worklineMarquee, currentValue: flag(config.workline.marquee) },
 		{ id: "worklineAttachToBorder", label: copy.labels.worklineAttachToBorder, currentValue: flag(config.workline.attachToBorder) },
-		{ id: "messageLayout", label: copy.labels.messageLayout, currentValue: copy.values.messageLayouts[config.messageLayout] },
 	];
 }
 
@@ -260,29 +259,48 @@ function buildTelemetryItems(config: OpenTuiConfig, copy: SettingsCopy): Setting
 	];
 }
 
-const BORDER_TEXT_EDGES = { topChar: "top", bottomChar: "bottom", leftChar: "left" } as const;
+const BORDER_TEXT_EDGES = { topChar: "top", bottomChar: "bottom", leftChar: "left", rightChar: "right" } as const;
 type BorderTextField = "color" | keyof typeof BORDER_TEXT_EDGES;
 
 function isBorderTextField(id: string): id is BorderTextField {
 	return id === "color" || Object.hasOwn(BORDER_TEXT_EDGES, id);
 }
 
-function buildToolBorderItems(config: OpenTuiConfig, copy: SettingsCopy): SettingItem[] {
-	const border = config.toolBoxBorder;
+function presentationBorder(config: OpenTuiConfig, tab: Tab): ToolBoxBorderConfig | UserBoxBorderConfig {
+	return tab === "userBorder" ? getUserBoxBorder(config) : config.toolBoxBorder;
+}
+
+function userPresentationEnabled(config: OpenTuiConfig): boolean {
+	return getUserMessageLayout(config) === "compact" || getUserBoxBorder(config).enabled;
+}
+
+function withPresentationBorder(config: OpenTuiConfig, tab: Tab, border: ToolBoxBorderConfig | UserBoxBorderConfig): OpenTuiConfig {
+	return tab === "userBorder"
+		? { ...config, userMessageLayout: "compact", userBoxBorder: { ...border, enabled: true } as UserBoxBorderConfig }
+		: { ...config, toolMessageLayout: getToolMessageLayout(config), toolBoxBorder: border as ToolBoxBorderConfig };
+}
+
+function buildBorderItems(tab: Tab, config: OpenTuiConfig, copy: SettingsCopy): SettingItem[] {
+	const user = tab === "userBorder";
+	const border = presentationBorder(config, tab);
 	const flag = (value: boolean) => value ? copy.values.on : copy.values.off;
-	const symbol = (value?: string) => value === undefined ? copy.values.default : JSON.stringify(value);
-	return [
-		{ id: "enabled", label: copy.labels.toolBoxBorder, currentValue: flag(border.enabled) },
-		{ id: "style", label: copy.labels.borderStyle, currentValue: copy.values.borderStyles[border.style] },
-		{ id: "colorMode", label: copy.labels.borderColorMode, currentValue: copy.values.borderColorModes[border.colorMode] },
-		{ id: "color", label: copy.labels.borderColor, currentValue: border.color || copy.values.default },
-		{ id: "top", label: copy.labels.top, currentValue: flag(border.top.enabled) },
-		{ id: "topChar", label: copy.labels.topChar, currentValue: symbol(border.top.char) },
-		{ id: "bottom", label: copy.labels.bottom, currentValue: flag(border.bottom.enabled) },
-		{ id: "bottomChar", label: copy.labels.bottomChar, currentValue: symbol(border.bottom.char) },
-		{ id: "left", label: copy.labels.left, currentValue: flag(border.left.enabled) },
-		{ id: "leftChar", label: copy.labels.leftChar, currentValue: symbol(border.left.char) },
-	];
+	const items: SettingItem[] = user
+		? [{ id: "enabled", label: copy.labels.enabled, currentValue: flag(userPresentationEnabled(config)) }]
+		: [
+			{ id: "toolPresentation", label: copy.labels.toolPresentation, currentValue: flag(config.toolPresentation) },
+			{ id: "messageLayout", label: copy.labels.messageLayout, currentValue: flag(getToolMessageLayout(config) === "compact") },
+			{ id: "style", label: copy.labels.borderStyle, currentValue: border.enabled ? copy.values.borderStyles[border.style] : copy.values.off },
+		];
+	if (user ? !userPresentationEnabled(config) : !border.enabled) return items;
+	if (user) items.push({ id: "style", label: copy.labels.borderStyle, currentValue: copy.values.borderStyles[border.style] });
+	items.push({ id: "colorMode", label: copy.labels.borderColorMode, currentValue: copy.values.borderColorModes[border.colorMode] });
+	if (border.colorMode === "static") items.push({ id: "color", label: copy.labels.borderColor, currentValue: border.color || "muted" });
+	const glyphs = resolveBorderGlyphs(border.style, config.icons.mode === "ascii");
+	for (const edge of ["top", "bottom", "left", "right"] as const) {
+		items.push({ id: edge, label: copy.labels[edge], currentValue: flag(border[edge]?.enabled ?? false) });
+		items.push({ id: `${edge}Char`, label: copy.labels[`${edge}Char`], currentValue: border[edge]?.char === undefined ? `${copy.values.default} (${glyphs[edge]})` : JSON.stringify(border[edge].char) });
+	}
+	return items;
 }
 
 function buildItems(tab: Tab, config: OpenTuiConfig): SettingItem[] {
@@ -292,7 +310,8 @@ function buildItems(tab: Tab, config: OpenTuiConfig): SettingItem[] {
 		case "icons": return buildIconsItems(config, copy);
 		case "segments": return buildSegmentsItems(config, copy);
 		case "telemetry": return buildTelemetryItems(config, copy);
-		case "toolBorder": return buildToolBorderItems(config, copy);
+		case "toolBorder":
+		case "userBorder": return buildBorderItems(tab, config, copy);
 	}
 }
 
@@ -306,7 +325,6 @@ function handleSettingChange(
 		if (itemId === "inlineFooter") return { ...config, inlineFooter: !config.inlineFooter };
 		if (itemId === "settingsLanguage") return toggleLanguage(config);
 		if (itemId === "thinkingPeek") return cycleThinkingPeek(config);
-		if (itemId === "toolPresentation") return { ...config, toolPresentation: !config.toolPresentation };
 	}
 	if (tab === "icons") {
 		if (itemId === "mode") return cycleIconMode(config);
@@ -314,21 +332,30 @@ function handleSettingChange(
 		if (itemId === "editorBorderStyle") return { ...config, editorBorderStyle: config.editorBorderStyle === "surround" ? "minimal" : "surround" };
 		if (itemId === "worklineMarquee") return { ...config, workline: { ...config.workline, marquee: !config.workline.marquee } };
 		if (itemId === "worklineAttachToBorder") return { ...config, workline: { ...config.workline, attachToBorder: !config.workline.attachToBorder } };
-		if (itemId === "messageLayout") return { ...config, messageLayout: config.messageLayout === "normal" ? "compact" : "normal" };
 	}
-	if (tab === "toolBorder") {
-		const border = config.toolBoxBorder;
-		if (itemId === "enabled") return { ...config, toolBoxBorder: { ...border, enabled: !border.enabled } };
+	if (tab === "toolBorder" || tab === "userBorder") {
+		const user = tab === "userBorder";
+		const border = presentationBorder(config, tab);
+		if (itemId === "toolPresentation" && !user) return { ...config, toolPresentation: !config.toolPresentation };
+		if (itemId === "messageLayout" && !user) {
+			return { ...config, toolMessageLayout: getToolMessageLayout(config) === "normal" ? "compact" : "normal" };
+		}
+		if (itemId === "enabled" && user) {
+			const enabled = !userPresentationEnabled(config);
+			return { ...config, userMessageLayout: enabled ? "compact" : "normal", userBoxBorder: { ...border, enabled } as UserBoxBorderConfig };
+		}
 		if (itemId === "style") {
-			const order: ToolBoxBorderStyle[] = ["single", "bold", "double", "dashed", "custom"];
-			const style = order[(order.indexOf(border.style) + 1) % order.length]!;
-			return { ...config, toolBoxBorder: { ...border, style } };
+			const presets: ToolBoxBorderStyle[] = ["single", "bold", "double", "dashed", "custom"];
+			const order: Array<ToolBoxBorderStyle | "off"> = user ? presets : ["off", ...presets];
+			const current = !user && !border.enabled ? "off" : border.style;
+			const next = order[(order.indexOf(current) + 1) % order.length]!;
+			return withPresentationBorder(config, tab, next === "off" ? { ...border, enabled: false } : { ...border, enabled: true, style: next });
 		}
 		if (itemId === "colorMode") {
-			return { ...config, toolBoxBorder: { ...border, colorMode: border.colorMode === "status" ? "static" : "status" } };
+			return withPresentationBorder(config, tab, { ...border, colorMode: border.colorMode === "static" ? (user ? "theme" : "status") : "static" });
 		}
-		if (itemId === "top" || itemId === "bottom" || itemId === "left") {
-			return { ...config, toolBoxBorder: { ...border, [itemId]: { ...border[itemId], enabled: !border[itemId].enabled } } };
+		if (itemId === "top" || itemId === "bottom" || itemId === "left" || itemId === "right") {
+			return withPresentationBorder(config, tab, { ...border, [itemId]: { ...border[itemId], enabled: !border[itemId]?.enabled } });
 		}
 	}
 	if (tab === "segments") {
@@ -384,10 +411,10 @@ class SettingsUi implements SettingsUiHandle {
 
 	private applySetting(itemId: string): void {
 		this.selectedItemByTab[this.tab] = itemId;
-		if (this.tab === "toolBorder" && isBorderTextField(itemId)) {
-			const border = this.config.toolBoxBorder;
+		if ((this.tab === "toolBorder" || this.tab === "userBorder") && isBorderTextField(itemId)) {
+			const border = presentationBorder(this.config, this.tab);
 			const input = new Input();
-			input.setValue(itemId === "color" ? border.color ?? "" : border[BORDER_TEXT_EDGES[itemId]].char ?? "");
+			input.setValue(itemId === "color" ? border.color ?? "" : border[BORDER_TEXT_EDGES[itemId]]?.char ?? "");
 			input.focused = this.focused;
 			this.editing = { field: itemId, input };
 			input.onSubmit = (value) => this.saveBorderText(itemId, value);
@@ -420,17 +447,17 @@ class SettingsUi implements SettingsUiHandle {
 			this.rebuild(field);
 			return;
 		}
-		const border = { ...this.config.toolBoxBorder };
+		const border = { ...presentationBorder(this.config, this.tab) };
 		if (field === "color") {
 			if (value) border.color = value;
 			else delete border.color;
 		} else {
 			const edge = BORDER_TEXT_EDGES[field];
-			border[edge] = { ...border[edge] };
+			border[edge] = { enabled: border[edge]?.enabled ?? false, ...border[edge] };
 			if (value) border[edge].char = value;
 			else delete border[edge].char;
 		}
-		this.config = { ...this.config, toolBoxBorder: border };
+		this.config = withPresentationBorder(this.config, this.tab, border);
 		this.editing = undefined;
 		this.onChange(this.config);
 		this.rebuild(field);
@@ -454,6 +481,7 @@ class SettingsUi implements SettingsUiHandle {
 		}).join(" ");
 		this.container.addChild(new Text(tabBar, 1, 0));
 		this.container.addChild(new Text(this.theme.fg("dim", this.editing ? copy.editHint : copy.hint), 1, 0));
+		if (this.tab === "toolBorder" || this.tab === "userBorder") this.container.addChild(new Text(this.theme.fg("muted", copy.scope[this.tab]), 1, 0));
 
 		if (this.editing) {
 			const { field, input, error } = this.editing;

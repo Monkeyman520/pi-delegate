@@ -1,8 +1,8 @@
 import * as host from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, Theme, ThemeColor, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
 import { type Component, Box, Container, Spacer, Text, getCapabilities, imageFallback } from "@earendil-works/pi-tui";
-import type { OpenTuiConfig } from "./config.ts";
-import { MessageRail, ToolBoxFrame, resolveBorderGlyphs } from "./message-layout.ts";
+import { getToolMessageLayout, type OpenTuiConfig } from "./config.ts";
+import { MessageRail, ToolBoxFrame, borderFrameOptions } from "./message-layout.ts";
 import {
 	type Result, type Status, argumentsText, clean, finite, toolPolicy, statusColor,
 	renderCallSummary, renderChildActivity, compactContent, compactDiffLines, defaultOutputLines,
@@ -146,12 +146,6 @@ export class ToolPresentation {
 			if (config.enabled && config.toolBoxBorder?.enabled) {
 				const isAscii = config.icons.mode === "ascii";
 				const borderCfg = config.toolBoxBorder;
-				const glyphs = resolveBorderGlyphs(borderCfg.style, isAscii);
-				const topChar = borderCfg.top.char ?? glyphs.top;
-				const topLeftChar = borderCfg.style === "custom" && borderCfg.top.char ? borderCfg.top.char : glyphs.topLeft;
-				const leftChar = borderCfg.left.char ?? glyphs.left;
-				const bottomChar = borderCfg.bottom.char ?? glyphs.bottom;
-				const bottomLeftChar = borderCfg.style === "custom" && borderCfg.bottom.char ? borderCfg.bottom.char : glyphs.bottomLeft;
 				const paint = (text: string) => {
 					if (borderCfg.colorMode === "static") {
 						return theme.fg((borderCfg.color as ThemeColor) || "muted", text);
@@ -160,21 +154,16 @@ export class ToolPresentation {
 				};
 				const showTop = call && borderCfg.top.enabled;
 				const showBottom = (!call || !state.result) && borderCfg.bottom.enabled;
-				const showLeft = borderCfg.left.enabled;
 				return [new ToolBoxFrame(component, {
-					top: showTop,
-					bottom: showBottom,
-					left: showLeft,
-					topChar,
-					topLeftChar,
-					leftChar,
-					bottomChar,
-					bottomLeftChar,
-					paint,
+					...borderFrameOptions(borderCfg, isAscii, paint),
+					top: showTop, bottom: showBottom,
 				})];
 			}
-			if (config.enabled && config.messageLayout === "compact") {
-				return [new MessageRail(component, (text) => theme.fg(statusColor(this.status(context)), text), config.icons.mode === "ascii" ? "|" : "┃")];
+			if (config.enabled && getToolMessageLayout(config) === "compact") {
+				// Dormant legacy box colors must not change a rail merely on upgrade.
+				const color = config.toolMessageLayout !== undefined && config.toolBoxBorder.colorMode === "static"
+					? (config.toolBoxBorder.color as ThemeColor) || "muted" : statusColor(this.status(context));
+				return [new MessageRail(component, (text) => theme.fg(color, text), config.icons.mode === "ascii" ? "|" : "┃")];
 			}
 			if (nativeShell === "self") return [component];
 			// Reproduce the host default shell across the call/result sections. The host
@@ -195,7 +184,7 @@ export class ToolPresentation {
 					...(recognized ? this.nativeContext(name, context, state) : context), lastComponent: state.nativeCall,
 				});
 			} catch { state.nativeCall = undefined; } // Preserve the host's renderer-callback fallback.
-			if (recognized && name === "edit" && context.expanded && this.getConfig().messageLayout === "compact" && state.result && base.renderResult) {
+			if (recognized && name === "edit" && context.expanded && getToolMessageLayout(this.getConfig()) === "compact" && state.result && base.renderResult) {
 				// Native edit results populate the call-owned diff. Synchronize it before
 				// drawing the first expanded frame after the successful preview was hidden.
 				try {
@@ -242,7 +231,7 @@ export class ToolPresentation {
 								name, args, special, result: state.result,
 								isPartial: context.isPartial, isError: context.isError, status: this.status(context),
 								elapsedMs: this.elapsed(context, state),
-								hideOutput: this.getConfig().messageLayout === "compact" && !context.expanded && !context.isError,
+								hideOutput: getToolMessageLayout(this.getConfig()) === "compact" && !context.expanded && !context.isError,
 								scriptHint: special && name === "codemode" && !state.result ? host.keyHint("app.tools.expand", "to expand script") : "",
 							}, theme, this.getConfig().icons.mode, width);
 						},
@@ -264,7 +253,7 @@ export class ToolPresentation {
 							? [defaultResult(result, options, theme, context)] : [];
 						return [...(note ? [note] : []), ...raw, renderResult(result, options, theme, context, state)];
 					}
-					const hideOutput = this.getConfig().messageLayout === "compact" && !options.isPartial && !context.isError;
+					const hideOutput = getToolMessageLayout(this.getConfig()) === "compact" && !options.isPartial && !context.isError;
 					const body: Component[] = [];
 					// Preserve a third-party renderer's own compact presentation and actual controls.
 					if (!hideOutput && !special && base.renderResult) body.push(renderResult(result, options, theme, context, state));

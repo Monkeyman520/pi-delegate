@@ -19,6 +19,8 @@
 
 No blocking choice remains. Exact glyphs, preview line/row budgets, configuration key spelling, settings placement, refresh interval and internal module organization are reversible implementation details; this spec does not invent numeric acceptance thresholds or new public tool inputs for them. “Card” means one tool presentation, not a mandated decorative box or a new transcript entry.
 
+**Related contract (2026-10-13):** [Spec 0013](./0013-configurable-tool-call-box-borders.md) now governs independent User/Skill versus Tool presentation settings, optional four-sided borders, the captured new-install default baseline, and preservation of existing configuration on upgrade. Its new defaults must not override existing users' settings. This spec continues to govern universal Tool content/coverage, host integration and codemode semantics; it does not prescribe the shared `messageLayout` control.
+
 ## Requirements
 
 ### R1 — Presentation-only integration and host baseline
@@ -214,7 +216,7 @@ These are required future input-to-presentation scenarios, not tests run during 
 - Private tool-component patches, unrelated package coupling or delegate features.
 - Automatically merging/grouping unrelated top-level calls, a new execution scheduler, script analysis to guess intent/final call totals, or generated semantic output summaries.
 - Additional raw child-result retention, a full nested-result archive/viewer, or recovery of content absent from host metadata/parent output.
-- User-message redesign, a general persistent telemetry/history system or expanded cursor adaptation scope.
+- User/Skill presentation changes within this Tool-content spec (their independent configuration/borders are covered separately by Spec 0013), a general persistent telemetry/history system or expanded cursor adaptation scope.
 - Ticket decomposition, implementation planning, implementation/dependency installation or QA execution during this selected refinement endpoint.
 
 This revision establishes a requirements contract, not implementation or QA completion. Existing workspace code/manifests reflect an earlier recognized-native-only increment; its presence does not establish H5 coverage or verify the SDK upgrade. The codemode child-data limitation remains accepted, not an unresolved blocker. No additional behavioral assumption or blocking decision is required for this spec-only handoff.

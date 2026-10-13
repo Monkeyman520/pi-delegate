@@ -12,7 +12,7 @@ import {
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
 import { ScrollView, Text } from "@earendil-works/pi-tui";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { LEGACY_DEFAULT_CONFIG as DEFAULT_CONFIG } from "../src/config.ts";
 import type { OpenTuiEditor } from "../src/editor.ts";
 import { stripAnsi } from "../src/utils.ts";
 import openTui from "../src/index.ts";
@@ -491,7 +491,7 @@ test("aggregates all output and generation time across an agent run", () => {
 	assert.equal(telemetry.rateUsdPerMTokens, 4);
 });
 
-test("open-tui notifies once after a complete agent run", () => {
+test("new detached defaults do not publish a second telemetry notification", () => {
 	const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => void>>();
 	const notifications: string[] = [];
 	const pi = {
@@ -522,8 +522,7 @@ test("open-tui notifies once after a complete agent run", () => {
 
 	assert.equal(notifications.length, 0);
 	emit("agent_settled", { type: "agent_settled", aborted: false });
-	assert.equal(notifications.length, 1);
-	assert.match(notifications[0]!, /TPS .*TTFT/);
+	assert.equal(notifications.length, 0, "detached telemetry belongs in Workline, not a separate notification");
 });
 
 test("open-tui keeps a bounded peek scoped to the current assistant", async () => {
@@ -590,6 +589,7 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 
 	try {
+		await writeFile(join(agentDir, "open-tui.json"), JSON.stringify(DEFAULT_CONFIG));
 		Object.defineProperty(process.stdout, "columns", { configurable: true, value: 120 });
 		openTui(pi);
 		await emit("session_start", { type: "session_start" });

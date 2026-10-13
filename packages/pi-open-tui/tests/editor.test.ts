@@ -3,7 +3,7 @@ import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { TuiMainScreen, type EditorTheme, type Terminal, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { installEditor, OpenTuiEditor } from "../src/editor.ts";
-import { DEFAULT_CONFIG } from "../src/config.ts";
+import { LEGACY_DEFAULT_CONFIG as DEFAULT_CONFIG } from "../src/config.ts";
 import { createWorklineRenderer } from "../src/workline.ts";
 import type { RunState } from "../src/run-outcome.ts";
 import { resolveGlyphs } from "../src/icons.ts";

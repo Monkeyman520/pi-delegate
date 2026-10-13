@@ -1,7 +1,7 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { Box, sliceByColumn, truncateToWidth, type Component, type Markdown, type TUI } from "@earendil-works/pi-tui";
-import type { OpenTuiConfig } from "./config.ts";
-import { isImageRow, MessageRail } from "./message-layout.ts";
+import { getUserBoxBorder, getUserMessageLayout, type OpenTuiConfig } from "./config.ts";
+import { isImageRow, MessageRail, ToolBoxFrame, borderFrameOptions, frameInsets } from "./message-layout.ts";
 import { patch, resolveRenderer, type HostRenderer } from "./host-patches.ts";
 
 const ZONE_START = "\x1b]133;A\x07";
@@ -42,8 +42,12 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 	let renderer: Renderer | undefined;
 	let undoRenderer: (() => void) | undefined;
 	const users = new Map<Component, () => void>();
-	const compact = () => active && getConfig().enabled && getConfig().messageLayout === "compact";
+	const compact = () => active && getConfig().enabled && (getUserMessageLayout(getConfig()) === "compact" || getUserBoxBorder(getConfig()).enabled);
 	const warn = () => { if (compact() && !warned) { warned = true; unavailable(); } };
+	const paint = (text: string, fallback: ThemeColor) => {
+		const border = getUserBoxBorder(getConfig());
+		return getTheme().fg(border.colorMode === "static" ? (border.color as ThemeColor) || "muted" : fallback, text);
+	};
 	const restoreUsers = () => { for (const restore of users.values()) restore(); users.clear(); };
 
 	function bindUser(user: User): void {
@@ -56,24 +60,29 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 			if (!child) { warn(); return native.call(this, width); }
 			try {
 				if (width <= 0) return [];
-				const inset = Math.min(2, width - 1);
-				const padding = Math.min(1, width - inset - 1);
-				const inner = Math.max(1, width - inset - padding);
-				// Keep native Markdown, transformers and one-line vertical padding.
-				// Replace only its configured horizontal margins with our rail/body inset.
-				const rendered = child.render(inner + this.outputPad * 2);
-				if (!rendered.length) return [];
-				if (rendered.length < 3) { warn(); return native.call(this, width); }
-				const theme = getTheme();
-				const glyph = getConfig().icons.mode === "ascii" ? "|" : "┃";
-				const lines = rendered.map((line) => {
-					if (isImageRow(line)) return line;
-					const prefix = inset ? theme.fg("userMessageText", inset === 2 ? `${glyph} ` : glyph) : "";
-					const content = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
-					// The rail/gap are outside the background; only the body owns its left margin.
-					const body = theme.bg("userMessageBg", truncateToWidth(" ".repeat(padding) + content, width - inset, ""));
-					return prefix + body;
-				});
+				const border = getUserBoxBorder(getConfig());
+				const renderBody = (bodyWidth: number, rail: boolean): string[] => {
+					const inset = rail ? Math.min(2, bodyWidth - 1) : 0;
+					const padding = Math.min(1, bodyWidth - inset - 1);
+					const inner = Math.max(1, bodyWidth - inset - padding);
+					// Render real native Markdown: preserve transforms, whitespace and vertical padding.
+					const rendered = child.render(inner + this.outputPad * 2);
+					if (!rendered.length) return [];
+					if (rendered.length < 3) throw new Error("Unsupported User shell");
+					const glyph = getConfig().icons.mode === "ascii" ? "|" : "┃";
+					return rendered.map((line) => {
+						if (isImageRow(line)) return line;
+						const prefix = inset ? paint(inset === 2 ? `${glyph} ` : glyph, "userMessageText") : "";
+						const content = sliceByColumn(line, this.outputPad, this.outputPad + inner, true);
+						const body = getTheme().bg("userMessageBg", truncateToWidth(" ".repeat(padding) + content, bodyWidth - inset, ""));
+						return prefix + body;
+					});
+				};
+				const lines = border.enabled
+					? new ToolBoxFrame({ render: (w) => renderBody(w, false), invalidate() { child.invalidate(); } },
+						borderFrameOptions(border, getConfig().icons.mode === "ascii", (text) => paint(text, "userMessageText"))).render(width)
+					: renderBody(width, true);
+				if (!lines.length) return [];
 				// Preserve the native terminal prompt-zone markers on the padded shell.
 				lines[0] = ZONE_START + lines[0];
 				lines[lines.length - 1] = ZONE_END + lines[lines.length - 1];
@@ -89,8 +98,7 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 		// Compose the real native MouseRegion/content, not flattened native Box output.
 		// This removes only the shell background/padding and retains click-to-expand.
 		const body = new Box(1, 0);
-		const rail = new MessageRail(body, (text) => getTheme().fg("accent",
-			getConfig().icons.mode === "ascii" ? text.replace("┃", "|") : text));
+		let frame: MessageRail | ToolBoxFrame = new MessageRail(body, (text) => paint(text, "accent"));
 		const nativeRender = skill.render;
 		const nativeMouse = skill.handleMouse;
 		let renderedCompact = false;
@@ -100,9 +108,15 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 			if (!skillShell(this)) { warn(); return nativeRender.call(this, width); }
 			try {
 				body.children = this.children;
-				const bodyWidth = Math.max(1, width - Math.min(2, Math.max(0, width - 1)));
+				const border = getUserBoxBorder(getConfig());
+				const ascii = getConfig().icons.mode === "ascii";
+				const insets = frameInsets(width, border.enabled ? border.left.enabled : true, border.enabled && !!border.right?.enabled);
+				const bodyWidth = Math.max(1, width - insets.left - insets.right);
 				body.setPaddingX(Math.min(1, Math.floor((bodyWidth - 1) / 2)));
-				const lines = rail.render(width);
+				frame = border.enabled
+					? new ToolBoxFrame(body, borderFrameOptions(border, ascii, (text) => paint(text, "accent")))
+					: new MessageRail(body, (text) => paint(text, "accent"), ascii ? "|" : "┃");
+				const lines = frame.render(width);
 				renderedCompact = true;
 				return lines;
 			} catch { warn(); return nativeRender.call(this, width); }
@@ -114,9 +128,9 @@ export function installUserMessageLayout(tui: TUI, getConfig: () => OpenTuiConfi
 				// Expansion/invalidation can replace the native MouseRegion between frames.
 				if (body.children !== this.children) {
 					body.children = this.children;
-					rail.render(event.width);
+					frame.render(event.width);
 				}
-				return rail.handleMouse(event);
+				return frame.handleMouse(event);
 			});
 		} catch { restoreRender(); warn(); return; }
 		users.set(skill, () => { restoreMouse(); restoreRender(); });

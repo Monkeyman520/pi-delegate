@@ -24,7 +24,17 @@ export interface ToolBoxBorderConfig {
 	top: ToolBoxBorderEdgeConfig;
 	bottom: ToolBoxBorderEdgeConfig;
 	left: ToolBoxBorderEdgeConfig;
+	right?: ToolBoxBorderEdgeConfig;
 }
+export interface UserBoxBorderConfig extends Omit<ToolBoxBorderConfig, "colorMode"> {
+	colorMode: "theme" | "static";
+}
+
+export const DEFAULT_USER_BORDER: UserBoxBorderConfig = {
+	enabled: false, style: "bold", colorMode: "theme",
+	top: { enabled: false }, bottom: { enabled: false },
+	left: { enabled: true }, right: { enabled: false },
+};
 
 export type { IconMode } from "./icons.ts";
 
@@ -70,6 +80,10 @@ export interface OpenTuiConfig {
 	cursorStyle: CursorStyle;
 	editorBorderStyle: EditorBorderStyle;
 	messageLayout: MessageLayout;
+	/** Independent selections; omitted legacy fields inherit messageLayout in memory only. */
+	userMessageLayout?: MessageLayout;
+	toolMessageLayout?: MessageLayout;
+	userBoxBorder?: UserBoxBorderConfig;
 	icons: {
 		mode: IconMode;
 	};
@@ -80,7 +94,7 @@ export interface OpenTuiConfig {
 	toolBoxBorder: ToolBoxBorderConfig;
 }
 
-export const DEFAULT_CONFIG: OpenTuiConfig = {
+export const LEGACY_DEFAULT_CONFIG: OpenTuiConfig = {
 	enabled: true,
 	inlineFooter: false,
 	toolPresentation: true,
@@ -137,6 +151,30 @@ export const DEFAULT_CONFIG: OpenTuiConfig = {
 	},
 };
 
+/** New installs only. Existing files normalize against the historical defaults above. */
+export const DEFAULT_CONFIG: OpenTuiConfig = {
+	...structuredClone(LEGACY_DEFAULT_CONFIG),
+	cursorStyle: "bar", editorBorderStyle: "minimal", messageLayout: "compact",
+	userMessageLayout: "compact", toolMessageLayout: "compact",
+	userBoxBorder: structuredClone(DEFAULT_USER_BORDER),
+	workline: { marquee: true, attachToBorder: false },
+	toolBoxBorder: {
+		enabled: false, style: "double", colorMode: "status",
+		top: { enabled: true }, bottom: { enabled: false },
+		left: { enabled: true }, right: { enabled: false },
+	},
+};
+
+export function getUserMessageLayout(config: OpenTuiConfig): MessageLayout {
+	return config.userMessageLayout ?? config.messageLayout;
+}
+export function getToolMessageLayout(config: OpenTuiConfig): MessageLayout {
+	return config.toolMessageLayout ?? config.messageLayout;
+}
+export function getUserBoxBorder(config: OpenTuiConfig): UserBoxBorderConfig {
+	return config.userBoxBorder ?? DEFAULT_USER_BORDER;
+}
+
 export function getConfigPath(): string {
 	const agentDir = getAgentDir();
 	return join(agentDir, "open-tui.json");
@@ -164,20 +202,36 @@ function enumValue<T>(value: unknown, choices: readonly T[], fallback: T): T {
 }
 
 function normalizeConfig(value: unknown): OpenTuiConfig {
-	const config = normalizeFields(DEFAULT_CONFIG, value);
-	config.settingsLanguage = enumValue(config.settingsLanguage, ["en", "zh"], DEFAULT_CONFIG.settingsLanguage);
-	config.cursorStyle = enumValue(config.cursorStyle, ["block", "bar", "underline"], DEFAULT_CONFIG.cursorStyle);
-	config.editorBorderStyle = enumValue(config.editorBorderStyle, ["surround", "minimal"], DEFAULT_CONFIG.editorBorderStyle);
-	config.messageLayout = enumValue(config.messageLayout, ["normal", "compact"], DEFAULT_CONFIG.messageLayout);
-	config.icons.mode = enumValue(config.icons.mode, ["auto", "nerd", "unicode", "ascii"], DEFAULT_CONFIG.icons.mode);
-	config.thinkingPeek.lines = enumValue(config.thinkingPeek.lines, [0, 1, 2], DEFAULT_CONFIG.thinkingPeek.lines);
+	const config = normalizeFields(LEGACY_DEFAULT_CONFIG, value);
+	config.settingsLanguage = enumValue(config.settingsLanguage, ["en", "zh"], LEGACY_DEFAULT_CONFIG.settingsLanguage);
+	config.cursorStyle = enumValue(config.cursorStyle, ["block", "bar", "underline"], LEGACY_DEFAULT_CONFIG.cursorStyle);
+	config.editorBorderStyle = enumValue(config.editorBorderStyle, ["surround", "minimal"], LEGACY_DEFAULT_CONFIG.editorBorderStyle);
+	config.messageLayout = enumValue(config.messageLayout, ["normal", "compact"], LEGACY_DEFAULT_CONFIG.messageLayout);
+	config.icons.mode = enumValue(config.icons.mode, ["auto", "nerd", "unicode", "ascii"], LEGACY_DEFAULT_CONFIG.icons.mode);
+	config.thinkingPeek.lines = enumValue(config.thinkingPeek.lines, [0, 1, 2], LEGACY_DEFAULT_CONFIG.thinkingPeek.lines);
 	if (config.toolBoxBorder) {
-		config.toolBoxBorder.style = enumValue(config.toolBoxBorder.style, ["single", "bold", "double", "dashed", "custom"], DEFAULT_CONFIG.toolBoxBorder.style);
-		config.toolBoxBorder.colorMode = enumValue(config.toolBoxBorder.colorMode, ["status", "static"], DEFAULT_CONFIG.toolBoxBorder.colorMode);
+		config.toolBoxBorder.style = enumValue(config.toolBoxBorder.style, ["single", "bold", "double", "dashed", "custom"], LEGACY_DEFAULT_CONFIG.toolBoxBorder.style);
+		config.toolBoxBorder.colorMode = enumValue(config.toolBoxBorder.colorMode, ["status", "static"], LEGACY_DEFAULT_CONFIG.toolBoxBorder.colorMode);
 		if (config.toolBoxBorder.color !== undefined && typeof config.toolBoxBorder.color !== "string") delete config.toolBoxBorder.color;
 		if (config.toolBoxBorder.top?.char !== undefined && typeof config.toolBoxBorder.top.char !== "string") delete config.toolBoxBorder.top.char;
 		if (config.toolBoxBorder.bottom?.char !== undefined && typeof config.toolBoxBorder.bottom.char !== "string") delete config.toolBoxBorder.bottom.char;
 		if (config.toolBoxBorder.left?.char !== undefined && typeof config.toolBoxBorder.left.char !== "string") delete config.toolBoxBorder.left.char;
+	}
+	for (const field of ["userMessageLayout", "toolMessageLayout"] as const) {
+		if (Object.hasOwn(config, field)) config[field] = enumValue(config[field], ["normal", "compact"], config.messageLayout);
+	}
+	if (Object.hasOwn(config, "userBoxBorder")) {
+		config.userBoxBorder = normalizeFields(DEFAULT_USER_BORDER, config.userBoxBorder);
+		config.userBoxBorder.style = enumValue(config.userBoxBorder.style, ["single", "bold", "double", "dashed", "custom"], DEFAULT_USER_BORDER.style);
+		config.userBoxBorder.colorMode = enumValue(config.userBoxBorder.colorMode, ["theme", "static"], "theme");
+	}
+	for (const border of [config.toolBoxBorder, config.userBoxBorder]) {
+		if (!border) continue;
+		if (border.color !== undefined && typeof border.color !== "string") delete border.color;
+		if (border.right !== undefined) border.right = normalizeFields({ enabled: false }, border.right);
+		for (const edge of [border.top, border.bottom, border.left, border.right]) {
+			if (edge?.char !== undefined && typeof edge.char !== "string") delete edge.char;
+		}
 	}
 	return config;
 }
@@ -195,12 +249,13 @@ export function ensureConfigExists(): void {
 }
 
 export function loadConfig(notify?: (msg: string, level: "warning" | "info") => void): OpenTuiConfig {
+	const fallback = existsSync(getConfigPath()) ? LEGACY_DEFAULT_CONFIG : DEFAULT_CONFIG;
 	try {
 		ensureConfigExists();
 		return normalizeConfig(JSON.parse(readFileSync(getConfigPath(), "utf8")));
 	} catch (error) {
 		notify?.(`open-tui config error: ${error instanceof Error ? error.message : String(error)}`, "warning");
-		return structuredClone(DEFAULT_CONFIG);
+		return structuredClone(fallback);
 	}
 }
 
