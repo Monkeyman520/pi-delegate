@@ -134,6 +134,54 @@ test("previews border styles without reinstalling and localizes their names", as
 	}
 });
 
+for (const setting of ["icons", "thinkingPeek"] as const) {
+	test(`preserves unknown nested config fields when cycling ${setting} through the panel`, async () => {
+		const agentDir = mkdtempSync(join(tmpdir(), "pi-open-tui-nested-settings-"));
+		const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+		let settings: Awaited<ReturnType<typeof openSettings>> | undefined;
+		try {
+			process.env.PI_CODING_AGENT_DIR = agentDir;
+			const icons = { mode: "auto", legacyGlyphs: { branch: "custom" }, futureModes: ["custom"] };
+			const thinkingPeek = { lines: 1, legacyStyle: { color: "muted" }, futureEnabled: false };
+			writeFileSync(join(agentDir, "open-tui.json"), JSON.stringify({ icons, thinkingPeek }), "utf8");
+			const config = loadConfig();
+			assert.deepEqual(config.icons, icons);
+			assert.deepEqual(config.thinkingPeek, thinkingPeek);
+			settings = await openSettings(config, saveConfig);
+
+			if (setting === "icons") {
+				settings.component.handleInput("\t");
+				assert.match(selectedLine(settings.component), /Icon mode/);
+			} else {
+				settings.component.handleInput("\x1b[B");
+				settings.component.handleInput("\x1b[B");
+				assert.match(selectedLine(settings.component), /Thinking peek/);
+			}
+
+			const values = setting === "icons" ? ["nerd", "unicode", "ascii", "auto"] : [2, 0, 1];
+			for (const value of values) {
+				settings.component.handleInput("\r");
+				const expectedIcons = setting === "icons" ? { ...icons, mode: value } : icons;
+				const expectedThinkingPeek = setting === "thinkingPeek" ? { ...thinkingPeek, lines: value } : thinkingPeek;
+				assert.deepEqual(settings.getConfig().icons, expectedIcons);
+				assert.deepEqual(settings.getConfig().thinkingPeek, expectedThinkingPeek);
+				const reloaded = loadConfig();
+				assert.deepEqual(reloaded.icons, expectedIcons);
+				assert.deepEqual(reloaded.thinkingPeek, expectedThinkingPeek);
+				assert.equal(settings.isClosed(), false);
+			}
+			assert.deepEqual(config.icons, icons);
+			assert.deepEqual(config.thinkingPeek, thinkingPeek);
+		} finally {
+			settings?.component.handleInput("q");
+			await settings?.waitForClose();
+			if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+			rmSync(agentDir, { recursive: true, force: true });
+		}
+	});
+}
+
 test("persists border styles and defaults legacy config to surround", () => {
 	const agentDir = mkdtempSync(join(tmpdir(), "pi-open-tui-border-"));
 	const previous = process.env.PI_CODING_AGENT_DIR;

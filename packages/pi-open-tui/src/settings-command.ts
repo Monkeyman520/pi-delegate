@@ -132,7 +132,7 @@ function cycleIconMode(config: OpenTuiConfig): OpenTuiConfig {
 	const order: IconMode[] = ["auto", "nerd", "unicode", "ascii"];
 	const currentIdx = order.indexOf(config.icons.mode);
 	const next = order[(currentIdx + 1) % order.length]!;
-	return { ...config, icons: { mode: next } };
+	return { ...config, icons: { ...config.icons, mode: next } };
 }
 
 function toggleEnabled(config: OpenTuiConfig): OpenTuiConfig {
@@ -161,7 +161,7 @@ function cycleThinkingPeek(config: OpenTuiConfig): OpenTuiConfig {
 	const next = ([1, 2, 0] as const)[config.thinkingPeek.lines] ?? 0;
 	return {
 		...config,
-		thinkingPeek: { lines: next },
+		thinkingPeek: { ...config.thinkingPeek, lines: next },
 	};
 }
 
