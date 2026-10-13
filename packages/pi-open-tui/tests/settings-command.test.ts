@@ -322,11 +322,13 @@ test("Tool controls are enhancement, compression, then optional border style in 
 		settings.component.handleInput("\r");
 		assert.equal(settings.getConfig().toolPresentation, false);
 		assert.equal(getToolMessageLayout(settings.getConfig()), "compact");
+		settings.component.handleInput("\r");
+		assert.equal(settings.getConfig().toolPresentation, true);
 		settings.component.handleInput("\x1b[B");
 		assert.match(selectedLine(settings.component), language === "zh" ? /压缩展示.*开启/ : /Compression.*On/);
 		settings.component.handleInput("\r");
 		assert.equal(getToolMessageLayout(settings.getConfig()), "normal");
-		assert.equal(settings.getConfig().toolPresentation, false);
+		assert.equal(settings.getConfig().toolPresentation, true);
 		settings.component.handleInput("\x1b[B");
 		assert.match(selectedLine(settings.component), language === "zh" ? /边框样式.*关闭/ : /Border style.*Off/);
 		assert.equal(settings.getConfig().toolBoxBorder.style, "double", "hidden default preset is unchanged");
@@ -342,7 +344,7 @@ test("Tool controls are enhancement, compression, then optional border style in 
 		assert.equal(settings.getConfig().toolBoxBorder.style, "custom", "Off retains saved customization");
 		assert.doesNotMatch(settings.component.render(100).join("\n"), offOptions);
 		assert.equal(getToolMessageLayout(settings.getConfig()), "normal", "style selection does not toggle compression");
-		assert.equal(settings.getConfig().toolPresentation, false);
+		assert.equal(settings.getConfig().toolPresentation, true);
 		assert.deepEqual(settings.getConfig().userBoxBorder, config.userBoxBorder);
 		assert.equal(getUserMessageLayout(settings.getConfig()), "compact");
 		settings.component.handleInput("q"); await settings.waitForClose();
@@ -601,6 +603,45 @@ test("compact tool presentation is independently toggleable and localized", asyn
 		assert.deepEqual(settings.getConfig().footerSegments, config.footerSegments);
 		settings.component.handleInput("q");
 		await settings.waitForClose();
+	}
+});
+
+test("hides tool compression when enhancement is off and restores saved preferences", async () => {
+	for (const language of ["en", "zh"] as const) {
+		for (const enhanced of [false, true]) {
+			for (const layout of ["normal", "compact"] as const) {
+				for (const borderEnabled of [false, true]) {
+					const config = structuredClone(DEFAULT_CONFIG);
+					config.settingsLanguage = language;
+					config.toolPresentation = enhanced;
+					config.toolMessageLayout = layout;
+					config.toolBoxBorder.enabled = borderEnabled;
+					const settings = await openSettings(config);
+					for (let i = 0; i < 4; i++) settings.component.handleInput("\t");
+					const compression = language === "zh" ? /^ *(?:→ )?压缩展示(?=:|\s*$|\s{2,})/m : /^ *(?:→ )?Compression(?=:|\s*$|\s{2,})/m;
+					const borderStyle = language === "zh" ? /边框样式/ : /Border style/;
+					let enabled = enhanced;
+					for (let i = 0; i < 3; i++) {
+						for (const width of [40, 80]) {
+							const rendered = settings.component.render(width).join("\n");
+							if (enabled) assert.match(rendered, compression);
+							else assert.doesNotMatch(rendered, compression);
+							assert.match(rendered, borderStyle);
+						}
+						assert.deepEqual(settings.getConfig(), { ...config, toolPresentation: enabled });
+						settings.component.handleInput("\x1b[B");
+						assert.match(selectedLine(settings.component), enabled ? compression : borderStyle);
+						if (enabled) assert.match(selectedLine(settings.component), layout === "compact" ? /On|开启/ : /Off|关闭/);
+						settings.component.handleInput("\x1b[A");
+						settings.component.handleInput(" ");
+						enabled = !enabled;
+					}
+					assert.deepEqual(settings.getConfig(), { ...config, toolPresentation: enabled });
+					settings.component.handleInput("q");
+					await settings.waitForClose();
+				}
+			}
+		}
 	}
 });
 

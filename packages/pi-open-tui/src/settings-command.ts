@@ -288,7 +288,7 @@ function buildBorderItems(tab: Tab, config: OpenTuiConfig, copy: SettingsCopy): 
 		? [{ id: "enabled", label: copy.labels.enabled, currentValue: flag(userPresentationEnabled(config)) }]
 		: [
 			{ id: "toolPresentation", label: copy.labels.toolPresentation, currentValue: flag(config.toolPresentation) },
-			{ id: "messageLayout", label: copy.labels.messageLayout, currentValue: flag(getToolMessageLayout(config) === "compact") },
+			...(config.toolPresentation ? [{ id: "messageLayout", label: copy.labels.messageLayout, currentValue: flag(getToolMessageLayout(config) === "compact") }] : []),
 			{ id: "style", label: copy.labels.borderStyle, currentValue: border.enabled ? copy.values.borderStyles[border.style] : copy.values.off },
 		];
 	if (user ? !userPresentationEnabled(config) : !border.enabled) return items;
