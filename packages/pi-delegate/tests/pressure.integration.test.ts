@@ -907,3 +907,173 @@ for (const [reason, status, isError] of [
 		});
 	}, 30_000);
 }
+
+for (const backgroundMode of [false, true]) {
+	test(`budget real RPC: upfront model disclosure and held stream cancellation, background=${backgroundMode}`, async () => {
+		await withHost(async (host) => {
+			const call: PressureFixtureCall = {
+				task: {
+					id: `budget-stream-${backgroundMode}`,
+					streamText: "Observed partial work; unfinished and blocked.",
+				},
+				background: backgroundMode,
+				budget: { maxSeconds: 0.6 },
+				resultFormat: "handoff",
+				pressure: timePolicy,
+			};
+			const done = host.begin({ calls: [call] });
+			const child = await host.child(call.task.id);
+			const model = await host.model(child, 0);
+			const prompt =
+				model.users?.find((text) => text.startsWith("Task:\n")) ?? "";
+			for (const text of [
+				JSON.stringify(call.task),
+				"fixture-only",
+				"Result reporting convention",
+				"0.6 seconds",
+				"unlimited",
+				"queueing",
+				"initialization",
+				"Provider requests, tools and waits",
+				"no additional model reporting allowance",
+				"no extra final sections",
+				"no additional permissions",
+			])
+				expect(prompt).toContain(text);
+			await host.stagesReceived(child); // Earlier pressure does not extend the allowance.
+			await done;
+			let result = tool(await host.messages(), "delegate");
+			if (backgroundMode) {
+				const id = background(result).taskId;
+				result = tool(await host.queryResult(id), "delegate_status");
+				const firstUsage = background(result).usage;
+				await host.prompt(`STATUS ${id}`);
+				expect(
+					background(tool(await host.messages(), "delegate_status")).usage,
+				).toEqual(firstUsage);
+			}
+			const details = backgroundMode
+				? background(result).result
+				: (result.details as unknown as DelegationDetails);
+			expect(details).toMatchObject({
+				status: "cancelled",
+				budget: { maxSeconds: 0.6 },
+				budgetStop: { cause: "budget", dimension: "seconds", limit: 0.6 },
+				partialOutput: true,
+				usagePartial: true,
+			});
+			expect(textOf(result)).toContain("Observed partial work");
+			expect(textOf(result)).toContain("Partial output");
+			expect(models(host.trace(child.pid))).toHaveLength(1); // No extra report generation for this held stream.
+			expect(
+				(await host.messages()).filter(
+					(m) =>
+						m.role === "custom" && m.customType === "pi-delegate:completed",
+				),
+			).toHaveLength(0);
+			await host.cleaned(child);
+		});
+	}, 30_000);
+}
+
+test("budget real RPC: parallel/nested tools and unfinished tools are one completed turn", async () => {
+	await withHost(async (host) => {
+		const call: PressureFixtureCall = {
+			task: { id: "budget-tools", batch: true, holdToolsAt: [0] },
+			budget: { maxTurns: 1 },
+		};
+		const done = host.begin({ calls: [call] });
+		const child = await host.child(call.task.id);
+		await host.advance(child, 0);
+		await host.event(child, "gate-ready", (e) => e.text === "tool-0");
+		await host.event(
+			child,
+			"tool-end",
+			(e) => e.toolName === "pressure_nested",
+		);
+		await Bun.sleep(200);
+		expect(
+			host.trace(child.pid).filter((e) => e.type === "turn-end"),
+		).toHaveLength(0);
+		expect(existsSync(join(host.logs, `${child.pid}.closed`))).toBe(false);
+		await host.release(child, "tool-0");
+		await done;
+		const result = tool(await host.messages(), "delegate");
+		expect(result.details).toMatchObject({
+			status: "cancelled",
+			budgetStop: {
+				cause: "budget",
+				dimension: "turns",
+				limit: 1,
+				observed: 1,
+			},
+		});
+		expect(
+			host.trace(child.pid).find((e) => e.type === "turn-end")?.toolResults,
+		).toBe(3);
+		await host.cleaned(child);
+	});
+}, 30_000);
+
+test("budget real RPC: initialization excludes held time", async () => {
+	await withHost(async (host) => {
+		const done = host.begin({
+			calls: [{ task: { id: "budget-init" }, budget: { maxSeconds: 0.2 } }],
+		});
+		const child = await host.child();
+		await host.event(child, "gate-ready", (e) => e.text === "init");
+		await Bun.sleep(350);
+		expect(models(host.trace(child.pid))).toHaveLength(0);
+		expect(existsSync(join(host.logs, `${child.pid}.closed`))).toBe(false);
+		await host.release(child, "init");
+		await host.model(child, 0);
+		await done;
+		expect(tool(await host.messages(), "delegate").details).toMatchObject({
+			status: "cancelled",
+			budgetStop: { dimension: "seconds", limit: 0.2 },
+		});
+		await host.cleaned(child);
+	}, true);
+}, 30_000);
+
+test("budget real RPC: queued allowance starts after admission and predecessor cleanup", async () => {
+	const old = process.env.PI_DELEGATE_CONCURRENCY;
+	process.env.PI_DELEGATE_CONCURRENCY = "1";
+	try {
+		await withHost(async (host) => {
+			const calls: PressureFixtureCall[] = [
+				{
+					task: { id: "budget-first" },
+					background: true,
+					budget: { maxSeconds: 0.5 },
+				},
+				{
+					task: { id: "budget-queued" },
+					background: true,
+					budget: { maxSeconds: 0.2 },
+				},
+			];
+			await host.begin({ calls });
+			const first = await host.child("budget-first");
+			await Bun.sleep(250);
+			expect(host.children()).toHaveLength(1); // Queue time already exceeds follower's allowance.
+			const second = await host.child("budget-queued");
+			await host.cleaned(first);
+			expect((await host.model(second, 0)).users?.join("\n")).toContain(
+				"0.2 seconds",
+			);
+			await host.cleaned(second);
+			const acknowledgements = (await host.messages()).filter(
+				(m) => m.role === "toolResult" && m.toolName === "delegate",
+			);
+			for (const ack of acknowledgements) {
+				const id = background(ack as ToolResult).taskId;
+				const result = tool(await host.queryResult(id), "delegate_status");
+				expect(background(result).result?.budgetStop?.cause).toBe("budget");
+			}
+		});
+	} finally {
+		if (old === undefined) delete process.env.PI_DELEGATE_CONCURRENCY;
+		else process.env.PI_DELEGATE_CONCURRENCY = old;
+	}
+}, 30_000);

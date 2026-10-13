@@ -235,3 +235,33 @@ test("runner failure retains available usage and releases the slot for a queued 
 		await host.close();
 	}
 });
+
+test("queued budget is captured per invocation and omitted dimensions stay unlimited", async () => {
+	const host = runtime("1");
+	try {
+		await host.call("delegate", { task: "first", background: true });
+		await tick();
+		const budget = { maxSeconds: 0.25 };
+		const queued = await host.call("delegate", {
+			task: "budgeted",
+			background: true,
+			budget,
+		});
+		budget.maxSeconds = 99;
+		const id = (queued.details as { taskId: string }).taskId;
+		const details = await host.call("delegate_status", { taskId: id });
+		expect(details.details).toMatchObject({
+			task: { budget: { maxSeconds: 0.25 } },
+		});
+		host.runs.get("first")?.finish();
+		await tick();
+		expect(host.runs.get("budgeted")?.options.budget).toEqual({
+			maxSeconds: 0.25,
+		});
+		expect(host.runs.get("first")?.options.budget).toBeUndefined();
+		host.runs.get("budgeted")?.finish();
+		await tick();
+	} finally {
+		await host.close();
+	}
+});

@@ -14,6 +14,7 @@ pi-delegate is a TypeScript extension for Pi. It launches one-off subagents over
 - **Task management:** discover synchronous/background tasks, inspect retained results, and manage background work in a floating `/delegates` TUI panel or through tools.
 - **Runtime steering:** add context, narrow scope, or request a report from an active background child without restarting it.
 - **Soft pressure and status UI:** configure task-local finish reminders and monitor subagents above the TUI input.
+- **Opt-in execution budgets:** disclose per-task time/turn limits upfront and cancel on either observed threshold, independently of advisory pressure.
 
 ## Requirements
 
@@ -95,6 +96,14 @@ Background outcomes do not send automatic completion messages or wake the parent
 | `delegate_steer` | Submit plain-text instructions to an active background task by `taskId`. |
 
 In TUI mode, `/delegates` opens one floating list → details → confirmation/instruction panel. Synchronous IDs are read-only: independent cancellation and steering remain background-only. Records/results survive five-second compact-row expiry, but not scope invalidation; the panel does not require pi-open-tui.
+
+Optional execution limits work in either mode:
+
+```json
+{ "task": "Analyze the core risks and report unfinished work honestly", "budget": { "maxSeconds": 120, "maxTurns": 8 } }
+```
+
+Each omitted dimension is unlimited; no default hard budget is added. Seconds must be positive/finite and turns positive integers (zero is invalid). The child receives the limits before working. Time excludes queue/init but includes provider/tool waits; turns are completed assistant responses with associated tools. Either observed threshold cancels without extra reporting generation. Results distinguish budget cancellation and retain available partial text/usage; effects are not rolled back and process shutdown is not instantaneous. See [execution budgets](docs/usage.md#optional-execution-budget).
 
 See the [usage guide](docs/usage.md) for parameters, result states, pressure settings, and the status UI.
 

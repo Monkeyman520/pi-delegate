@@ -21,6 +21,13 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { BACKGROUND_USAGE_NOTICE, BackgroundTasks } from "./background.ts";
 import {
+	type BudgetStop,
+	budgetParameters,
+	type ExecutionBudget,
+	resolveBudget,
+	TaskBudget,
+} from "./budget.ts";
+import {
 	type ConfigurationDetails,
 	captureConfiguration,
 	isThinkingLevel,
@@ -39,6 +46,7 @@ import {
 	type InheritanceSnapshot,
 	SNAPSHOT_ENV,
 } from "./inheritance.ts";
+import { ObservedOutput } from "./observed-output.ts";
 import { formatDelegationOutput } from "./output.ts";
 import {
 	type PressureOverrides,
@@ -81,6 +89,7 @@ export interface DelegationOptions {
 	context?: string;
 	resultFormat?: ResultFormat;
 	pressure?: PressureOverrides;
+	budget?: ExecutionBudget;
 	status?: StatusObserver;
 	taskRecord?: TaskRecord;
 	onCwd?: (cwd: string) => void;
@@ -115,6 +124,10 @@ export interface DelegationDetails
 	stopReason?: AssistantMessage["stopReason"];
 	sessionId?: string;
 	error?: string;
+	budget?: ExecutionBudget;
+	budgetStop?: BudgetStop;
+	partialOutput?: boolean;
+	usagePartial?: boolean;
 	startupDiagnostics?: RpcDiagnostics & { stage: StartupStage };
 	configuration?: ConfigurationDetails;
 	/** Absolute startup directory, present only after the child has spawned. */
@@ -170,6 +183,16 @@ export async function runDelegation(
 		startupStage = undefined;
 		rpc?.discardDiagnostics();
 	};
+	let budget: TaskBudget | undefined;
+	let rejectBudget!: (error: Error) => void;
+	const budgetStopped = new Promise<never>((_resolve, reject) => {
+		rejectBudget = reject;
+	});
+	void budgetStopped.catch(() => {});
+	const observedOutput = new ObservedOutput();
+	let assistantCount = 0;
+	let observationVersion = 0;
+	let readbackVersion = 0;
 	let pressure: TaskPressure | undefined;
 	let unsubscribeEvents: (() => void) | undefined;
 	let steering: TaskSteering | undefined;
@@ -177,6 +200,48 @@ export async function runDelegation(
 	let observedUsage = sumUsage([]);
 	let completedUsage = sumUsage([]);
 	let streamingUsage: Usage | undefined;
+	let streamingVersion = 0;
+	let budgetEntries: SessionEntry[] | undefined;
+	const observedMessages = new Map<string, { usage: Usage; version: number }>();
+	const retainedBudgetUsage = (): Usage => {
+		if (!budgetEntries) return observedUsage;
+		let index = 0;
+		const represented = new Set<string>();
+		const entries = budgetEntries.map((entry) => {
+			if (entry.type !== "message") return entry;
+			const message = entry.message;
+			const key =
+				message.role === "assistant"
+					? `assistant:${index++}`
+					: message.role === "toolResult"
+						? `tool:${message.toolCallId}`
+						: undefined;
+			if (!key) return entry;
+			represented.add(key);
+			const observed = observedMessages.get(key);
+			if (
+				key === `assistant:${assistantCount}` &&
+				streamingUsage &&
+				streamingVersion > readbackVersion
+			)
+				return { ...entry, message: { ...message, usage: streamingUsage } };
+			return observed && observed.version > readbackVersion
+				? { ...entry, message: { ...message, usage: observed.usage } }
+				: entry;
+		});
+		return sumUsage([
+			entriesUsage(entries),
+			...[...observedMessages]
+				.filter(([key]) => !represented.has(key))
+				.map(([, value]) => value.usage),
+			...(streamingUsage && !represented.has(`assistant:${assistantCount}`)
+				? [streamingUsage]
+				: []),
+			...[...pendingToolUsage]
+				.filter(([id]) => !represented.has(`tool:${id}`))
+				.map(([, value]) => value),
+		]);
+	};
 	const pendingToolUsage = new Map<string, Usage>();
 	const details: Omit<DelegationDetails, "status" | "error"> =
 		options.requestedConfiguration
@@ -191,6 +256,8 @@ export async function runDelegation(
 		try {
 			options.signal?.throwIfAborted();
 			validateResultFormat(options.resultFormat);
+			const effectiveBudget = resolveBudget(options.budget);
+			if (effectiveBudget) details.budget = effectiveBudget;
 			validateCwd(options.cwd);
 			const policy = resolvePressure(options.pressure);
 			directory = await mkdtemp(join(tmpdir(), "pi-delegate-"));
@@ -227,6 +294,10 @@ export async function runDelegation(
 				"get_entries",
 			);
 			observedUsage = entriesUsage(entries);
+			assistantCount = entries.filter(
+				(entry) =>
+					entry.type === "message" && entry.message.role === "assistant",
+			).length;
 			completedUsage = observedUsage;
 			options.onUsage?.(observedUsage);
 			const initialized = [...entries]
@@ -287,25 +358,52 @@ export async function runDelegation(
 				);
 				return response;
 			});
+			if (effectiveBudget)
+				budget = new TaskBudget(effectiveBudget, (cause) => {
+					if (options.signal?.aborted) return;
+					details.budgetStop = cause;
+					pressure?.dispose();
+					steering?.close();
+					// Initiate cancellation now, never ask the model for a wrap-up answer.
+					void child.request("abort", {}, 250).catch(() => {});
+					rejectBudget(new Error("Execution budget reached"));
+				});
 			unsubscribeEvents = rpc.subscribe((record) => {
 				// Keep usage even if cancellation/transport failure prevents get_entries.
 				// Streaming updates are cumulative; only message_end commits a message.
 				const event = record as JsonAgentSessionEvent;
+				if (effectiveBudget) observedOutput.observe(event);
 				if (event.type === "message_start") {
 					const message = event.message;
-					if (message.role === "assistant") streamingUsage = message.usage;
+					if (message.role === "assistant") {
+						streamingUsage = message.usage;
+						streamingVersion = ++observationVersion;
+					}
 					// Tool results already carry usage at start, before async end hooks finish.
 					if (message.role === "toolResult" && message.usage)
 						pendingToolUsage.set(message.toolCallId, message.usage);
 				}
-				if (event.type === "message_update") streamingUsage = event.usage;
+				if (event.type === "message_update") {
+					streamingUsage = event.usage;
+					streamingVersion = ++observationVersion;
+				}
 				if (event.type === "message_end") {
 					const message = event.message;
 					if (message.role === "assistant" || message.role === "toolResult") {
+						const key =
+							message.role === "assistant"
+								? `assistant:${assistantCount++}`
+								: `tool:${message.toolCallId}`;
+						if (effectiveBudget && message.usage)
+							observedMessages.set(key, {
+								usage: message.usage,
+								version: ++observationVersion,
+							});
 						if (message.usage)
 							completedUsage = sumUsage([completedUsage, message.usage]);
-						if (message.role === "assistant") streamingUsage = undefined;
-						else pendingToolUsage.delete(message.toolCallId);
+						if (message.role === "assistant") {
+							streamingUsage = undefined;
+						} else pendingToolUsage.delete(message.toolCallId);
 					}
 				}
 				observedUsage = sumUsage([
@@ -313,35 +411,45 @@ export async function runDelegation(
 					...pendingToolUsage.values(),
 					...(streamingUsage ? [streamingUsage] : []),
 				]);
-				options.onUsage?.(observedUsage);
+				if (usage === undefined) options.onUsage?.(observedUsage);
 				if (record.type === "agent_start") {
 					started();
 					options.onPhase?.("running");
 				}
 				steering?.observe(record);
+				budget?.observe(record);
 				pressure?.observe(record);
 				options.status?.observe(record);
 			});
 			options.signal?.addEventListener("abort", pressure.dispose, {
 				once: true,
 			});
+			if (budget)
+				options.signal?.addEventListener("abort", budget.dispose, {
+					once: true,
+				});
 			options.signal?.addEventListener("abort", steering.close, { once: true });
 			if (options.signal?.aborted) steering.close();
 			const message = delegationPrompt(
 				options.task,
 				options.context,
 				options.resultFormat,
+				effectiveBudget,
 			);
 			startupStage = "submit";
-			const accepted = await rpc.request<{ disposition: string }>("prompt", {
-				message,
-			});
+			const accepted = await Promise.race([
+				rpc.request<{ disposition: string }>("prompt", { message }),
+				budgetStopped,
+			]);
 			if (accepted.disposition !== "started")
 				throw new Error(`Child task did not start: ${accepted.disposition}`);
 			started();
 			steering.confirmStart();
-			await Promise.race([settlement.promise, pressure.failure]);
+			if (details.budgetStop) throw new Error("Execution budget reached");
+			await Promise.race([settlement.promise, pressure.failure, budgetStopped]);
+			if (details.budgetStop) throw new Error("Execution budget reached");
 			pressure.dispose();
+			budget?.dispose();
 			// Projected get_messages can omit a length response during host recovery.
 			// Persisted entries retain every attempt, including the final truncated answer.
 			const { entries: resultEntries } = await rpc.request<{
@@ -412,26 +520,75 @@ export async function runDelegation(
 				isError: status === "failed" || status === "cancelled",
 			};
 		} catch (error) {
+			if (details.budgetStop && rpc) {
+				try {
+					// Bounded cleanup readback, not an execution/reporting grace period.
+					const { entries } = await rpc.request<{ entries: SessionEntry[] }>(
+						"get_entries",
+						{},
+						250,
+					);
+					budgetEntries = entries;
+					readbackVersion = observationVersion;
+					usage = retainedBudgetUsage();
+					options.onUsage?.(usage);
+				} catch {
+					/* Retain event observations if final entries are unavailable. */
+				}
+			}
 			primaryFailure = { error };
 			throw error;
 		} finally {
+			budget?.dispose();
+			if (budget) options.signal?.removeEventListener("abort", budget.dispose);
 			steering?.close();
 			if (steering)
 				options.signal?.removeEventListener("abort", steering.close);
 			pressure?.dispose();
-			unsubscribeEvents?.();
+			if (!details.budgetStop) {
+				unsubscribeEvents?.();
+				unsubscribeEvents = undefined;
+			}
 			if (pressure)
 				options.signal?.removeEventListener("abort", pressure.dispose);
 			settlement?.dispose();
 			try {
 				await rpc?.stop();
 			} finally {
+				unsubscribeEvents?.();
 				if (directory) await rm(directory, { recursive: true, force: true });
 			}
 		}
 		options.signal?.throwIfAborted();
 		return result;
 	} catch (error) {
+		if (details.budgetStop) {
+			const stop = details.budgetStop;
+			const message = `Execution budget reached: ${stop.dimension} limit ${stop.limit}, observed ${stop.observed}`;
+			const { text, ...outputDetails } = await formatDelegationOutput(
+				observedOutput.text(),
+			);
+			const finalUsage = retainedBudgetUsage();
+			options.onUsage?.(finalUsage);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `[Delegation cancelled: ${message}. Partial output; usage may be partial.]${text ? `\n\n${text}` : ""}`,
+					},
+				],
+				details: {
+					...details,
+					...outputDetails,
+					status: "cancelled",
+					error: message,
+					partialOutput: true,
+					usagePartial: true,
+				},
+				usage: finalUsage,
+				isError: true,
+			};
+		}
 		if (startupStage && !options.signal?.aborted) {
 			details.startupDiagnostics = {
 				stage: startupStage,
@@ -586,6 +743,7 @@ export function registerDelegate(
 		model: Type.Optional(modelParameter),
 		thinkingLevel: Type.Optional(thinkingParameter),
 		pressure: Type.Optional(pressureParameters),
+		budget: Type.Optional(budgetParameters),
 	});
 	pi.registerTool(
 		defineTool({
@@ -604,6 +762,14 @@ export function registerDelegate(
 				delete prepared.__piDelegateSelectionError;
 				delete prepared.__piDelegateCwdError;
 				delete prepared.__piDelegateResultFormatError;
+				delete prepared.__piDelegateBudgetError;
+				try {
+					resolveBudget(prepared.budget);
+				} catch (error) {
+					delete prepared.budget;
+					prepared.__piDelegateBudgetError =
+						error instanceof Error ? error.message : String(error);
+				}
 				try {
 					validateResultFormat(prepared.resultFormat);
 				} catch (error) {
@@ -645,6 +811,13 @@ export function registerDelegate(
 				let record: TaskRecord | undefined;
 				try {
 					combined.throwIfAborted();
+					const budgetError = (
+						params as Static<typeof parameters> & {
+							__piDelegateBudgetError?: string;
+						}
+					).__piDelegateBudgetError;
+					if (budgetError !== undefined) throw new Error(budgetError);
+					const budget = resolveBudget(params.budget);
 					const resultFormatError = (
 						params as Static<typeof parameters> & {
 							__piDelegateResultFormatError?: string;
@@ -698,6 +871,7 @@ export function registerDelegate(
 						cwd,
 						configuration: requestedConfiguration,
 						pressure: policy,
+						budget,
 					});
 					const progress = record.progress;
 					updateStatus(() => status.show(progress));
@@ -709,6 +883,7 @@ export function registerDelegate(
 						context: params.context,
 						resultFormat: params.resultFormat,
 						pressure: policy,
+						budget,
 						signal: combined,
 						status: record.progress,
 						taskRecord: record,

@@ -13,7 +13,7 @@ The child uses the CLI from the installed Pi host package:
 - A Node.js host uses the current Node executable.
 - A Bun host requires `node` on `PATH`.
 
-RPC control commands have a 40-second response timeout. Inherited-tool initialization waits up to 30 seconds for missing tools to become available. The model task itself has no fixed timeout; [soft pressure](usage.md#soft-pressure) is advisory rather than a hard execution budget.
+RPC control commands have a 40-second response timeout. Inherited-tool initialization waits up to 30 seconds for missing tools to become available. The model task has no default fixed timeout; opt-in [execution budgets](usage.md#optional-execution-budget) can cancel on observed time/turn thresholds, while [soft pressure](usage.md#soft-pressure) is advisory rather than a hard execution budget.
 
 ## Concurrency scheduling
 
@@ -35,6 +35,16 @@ pi --extension ./packages/pi-delegate/src/index.ts
 Excess tasks remain `queued` with captured invocation/model/thinking inputs and no child process. Admitted tasks are `initializing` until observed original-task execution makes them `running`. Initialization and owned cleanup both occupy capacity; settlement alone does not release it. Queued cancellation settles without launching a child. Background acceptance remains immediate and independent of ordinary parent-turn cancellation; synchronous calls wait through admission, execution and cleanup.
 
 Queue residence and initialization do not advance execution clocks, turns or soft pressure, and are not steer-ready. Scheduling adds no timeout, priority, preemption or automatic cost-budget cancellation.
+
+## Execution budgets and cancellation observations
+
+An invocation-local optional `budget: { maxSeconds?, maxTurns? }` is captured before admission and disclosed in the original child prompt. Neither omitted budgets nor soft pressure add hard limits. Budget observation starts on the same original-task `agent_start` boundary as progress/pressure; queueing and initialization are excluded, while provider/tool waits are included. Only completed `turn_end` observations count assistant-plus-associated-tools turns. Either enabled threshold at equality or above reserves one budget cancellation, closes pressure/steering and immediately submits RPC abort without extra reporting generation.
+
+The shared runner owns abort, bounded best-effort final-entry readback and process cleanup, not the budget observer or task record. Cleanup readback uses a short control timeout (250 ms), rather than the ordinary 40-second command timeout, and is data collection, not a model wrap-up grace period. Timers are disposed on settlement, cancellation and teardown; late observations cannot reopen terminal work. Admission remains occupied until runner cleanup returns. Existing synchronous/manual and background/scope-invalidation ownership remains unchanged.
+
+The terminal result retains effective limits and an explicit `budgetStop` cause/dimension/configured limit/observed seconds or count. Observed text deltas and message-end text are retained through shutdown and labelled partial, using existing preview/full-output artifacts. Reported streaming/tool usage is retained when final readback fails; readable entries replace corresponding observations rather than adding them twice, with additional available observations retained. Budget-cancelled usage may still be partial. Retained results/queries are observations, not new usage contributions; background usage stays separate from parent totals.
+
+These are observed stop triggers, not instantaneous process-stop deadlines or strict provider-request ceilings. Provider cancellation, event delivery and bounded process cleanup can lag the threshold; no file/external effect is undone, and neither the selected workspace nor separately retained output artifacts is deleted. Upfront disclosure cannot guarantee completion/compliance, a final report, or task acceptance.
 
 ## Tool and configuration inheritance
 

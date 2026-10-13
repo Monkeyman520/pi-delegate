@@ -14,6 +14,7 @@ pi-delegate 是一个 Pi TypeScript 扩展，通过 RPC 启动一次性子 agent
 - **任务管理**：发现同步／后台任务、查看保留的结果，通过浮动 `/delegates` TUI 面板或工具管理后台任务。
 - **运行时 steering**：向活跃后台子 agent 补充背景、缩小范围或请求报告，无需取消并重启。
 - **软催促与状态 UI**：配置任务级收尾提醒，在 TUI 输入框上方查看子 agent 状态。
+- **可选执行预算**：提前向子 agent 披露任务级时间／轮次上限，观察到任一上限即取消，与软催促相互独立。
 
 ## 环境要求
 
@@ -95,6 +96,14 @@ pi install /absolute/path/to/checkout/packages/pi-delegate
 | `delegate_steer` | 使用 `taskId` 向活跃后台任务提交纯文本指令。 |
 
 在 TUI 模式中，`/delegates` 打开单个浮动面板，依次浏览列表、详情、取消确认／指令输入。同步任务 ID 仅供查询，独立取消与 steering 仍只适用于后台任务。记录／结果不会随五秒状态行消失而删除，但会随所属作用域失效；无需安装 pi-open-tui。
+
+两种模式都可选择执行上限：
+
+```json
+{ "task": "分析核心风险，并如实报告未完成工作", "budget": { "maxSeconds": 120, "maxTurns": 8 } }
+```
+
+每个省略的维度均不受限，不增加默认强制预算。秒数必须为正有限数，轮次必须为正整数（零无效）。子 agent 开始工作前会收到预算说明。时间不包含排队／初始化，但包含 provider／工具及等待；轮次指完成的 assistant 响应及其关联工具。观察到任一上限即取消，不提供额外报告生成机会。结果明确标识预算取消并保留可用的部分文本／usage；不会回滚副作用，也不保证瞬时停止进程。详见[执行预算](docs/usage.md#optional-execution-budget)。
 
 参数、结果状态、催促配置和状态 UI 的详细说明请参阅[使用指南](docs/usage.md)。
 

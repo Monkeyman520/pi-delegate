@@ -11,6 +11,7 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export interface PressureFixtureTask {
 	id: string;
+	streamText?: string;
 	finishAt?: number;
 	holdToolsAt?: number[];
 	batch?: boolean;
@@ -21,6 +22,8 @@ export interface PressureFixtureTask {
 export interface PressureFixtureCall {
 	task: PressureFixtureTask;
 	background?: boolean;
+	budget?: { maxSeconds?: number; maxTurns?: number };
+	resultFormat?: "handoff";
 	pressure?: {
 		warning?: { afterSeconds?: number; afterTurns?: number };
 		urgent?: { afterSeconds?: number; afterTurns?: number };
@@ -355,6 +358,20 @@ export default function pressureProvider(pi: ExtensionAPI): void {
 							})),
 						});
 						start(); // The gate holds an actual unfinished assistant stream.
+						if (task.streamText) {
+							message.content = [{ type: "text", text: task.streamText }];
+							stream.push({
+								type: "text_start",
+								contentIndex: 0,
+								partial: message,
+							});
+							stream.push({
+								type: "text_delta",
+								contentIndex: 0,
+								delta: task.streamText,
+								partial: message,
+							});
+						}
 						if (!task.fast) await gate(`model-${call}`, options?.signal);
 						if (call >= (task.finishAt ?? 6) || task.fast)
 							respond(
@@ -423,6 +440,8 @@ export default function pressureProvider(pi: ExtensionAPI): void {
 											task: JSON.stringify(c.task),
 											background: c.background ?? false,
 											pressure: c.pressure,
+											budget: c.budget,
+											resultFormat: c.resultFormat,
 											context: "fixture-only",
 										},
 									})),

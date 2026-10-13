@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 
+import { budgetInstructions, type ExecutionBudget } from "./budget.ts";
 export type ResultFormat = "handoff";
 
 export const resultFormatParameter = Type.Literal("handoff", {
@@ -30,11 +31,14 @@ export function delegationPrompt(
 	task: string,
 	context?: string,
 	resultFormat?: ResultFormat,
+	budget?: ExecutionBudget,
 ): string {
 	validateResultFormat(resultFormat);
 	// Prefixing keeps tasks beginning with '/' from becoming extension commands.
 	const prompt = `Task:\n${task}${context === undefined ? "" : `\n\nSupplementary context:\n${context}`}`;
-	return resultFormat === "handoff"
-		? `${prompt}\n\n${HANDOFF_INSTRUCTIONS}`
-		: prompt;
+	const report =
+		resultFormat === "handoff"
+			? `${prompt}\n\n${HANDOFF_INSTRUCTIONS}`
+			: prompt;
+	return budget ? `${report}\n\n${budgetInstructions(budget)}` : report;
 }

@@ -217,7 +217,11 @@ export class RpcProcess {
 		}
 	}
 
-	request<T>(type: string, fields: RecordValue = {}): Promise<T> {
+	request<T>(
+		type: string,
+		fields: RecordValue = {},
+		timeoutMs = 40_000,
+	): Promise<T> {
 		if (this.failure) return Promise.reject(this.failure);
 		if (this.closing)
 			return Promise.reject(new Error("RPC child is shutting down"));
@@ -226,7 +230,7 @@ export class RpcProcess {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new RpcTimeoutError(type));
-			}, 40_000);
+			}, timeoutMs);
 			this.pending.set(id, {
 				resolve: (value) => resolve(value as T),
 				reject,

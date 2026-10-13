@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import type { ExecutionBudget } from "./budget.ts";
 import type {
 	ConfigurationDetails,
 	TaskConfiguration,
@@ -29,6 +30,7 @@ export interface TaskDetails extends TaskSummary {
 	configuration: ConfigurationDetails;
 	currentTools: string[];
 	pressure: { policy: PressurePolicy; accepted: TaskProgress["pressure"] };
+	budget?: ExecutionBudget;
 	usage: TaskProgress["usageValue"];
 }
 export interface TaskPage {
@@ -43,6 +45,7 @@ export interface TaskInput {
 	cwd: string;
 	configuration: TaskConfiguration;
 	pressure: PressurePolicy;
+	budget?: ExecutionBudget;
 }
 
 /** Record-only handle: execution/control remain with the existing owners. */
@@ -161,6 +164,9 @@ export class TaskRecord {
 				policy: structuredClone(this.input.pressure),
 				accepted: this.progress.pressure,
 			},
+			...(this.input.budget
+				? { budget: structuredClone(this.input.budget) }
+				: {}),
 			usage: structuredClone(this.progress.usageValue),
 		};
 	}

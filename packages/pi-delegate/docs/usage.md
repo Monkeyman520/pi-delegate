@@ -32,7 +32,31 @@ Children do not register any of these tools or the parent-only `/delegates` task
 | `model` | No | Exact configured `{ "provider": "...", "id": "..." }` identity; omitted inherits the current parent model. |
 | `thinkingLevel` | No | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; omitted independently inherits the current parent level. |
 | `pressure` | No | Per-task warning and urgent finish-reminder thresholds. Omitted fields use defaults. |
+| `budget` | No | Opt-in `{ maxSeconds?, maxTurns? }` execution limits. Omitted dimensions are unlimited; no default hard budget. |
 | `resultFormat` | No | `"handoff"` requests an advisory result handoff in either mode; omission preserves existing free-text behavior. Other explicit values are rejected. |
+
+### Optional execution budget
+
+```json
+{
+  "task": "Analyze the module; prioritize the core findings and report unfinished work honestly",
+  "budget": { "maxSeconds": 120, "maxTurns": 8 }
+}
+```
+
+Both fields are independently optional and work identically in synchronous/background mode, including RPC without a TUI. `maxSeconds` is a positive finite duration in seconds (fractions allowed); `maxTurns` is a positive integer. Zero, negative/nonfinite values, coerced strings, nulls and unknown budget fields are rejected before a child starts. Omitting `budget`, using `{}`, or omitting both limits adds no hard budget. Accepted limits are captured per invocation, including while queued.
+
+Running time begins at the observed original-task `agent_start`, excluding queue residence and child initialization but including provider requests, tools and waits. One turn means a completed assistant response together with its associated tools/results. An unfinished stream or pending tools do not count; parallel/nested calls are not extra turns.
+
+The child receives its actual enabled limits and these definitions in the original prompt, before model work, plus guidance to prioritize the core goal and prepare an honest completed/unfinished-work report within the allowance. This does not guarantee completion or compliance, grant additional authority, or require extra final sections when the task has conflicting output requirements such as JSON-only. Neither disclosure nor `completed` establishes task acceptance.
+
+While execution is active, reaching **either** enabled limit (`>=`) initiates cancellation, not a reminder. No extra model wrap-up allowance, repair prompt or follow-up generation is provided. `pressure` remains independently advisory: thresholds are not clamped/reordered, pressure cannot extend a budget, and a stage beyond a budget may never arrive.
+
+Budget stops use `cancelled`, not a new outcome. Synchronous `details.budget` retains enabled limits; `details.budgetStop` contains `{ cause: "budget", dimension: "seconds" | "turns", limit, observed }`. Turn observations are counts; time observations are elapsed seconds. Background/unified status queries expose the same terminal metadata under `details.result`, and task metadata contains the captured `budget`. Background completion remains query-only, without messages or parent wake-up.
+
+Available assistant text (including unfinished responses) is labelled partial output, not a complete final answer; `partialOutput: true` and `usagePartial: true` mark budget cancellation. Existing preview/full-output artifacts remain usable. Available usage is reconciled with readable entries without charging repeated queries again; unreported provider usage cannot be recovered. There is no promise of tool logs or a full transcript, and no artificial final report is generated.
+
+Cancellation observation and process cleanup are not instantaneous. A threshold is not an exact wall-clock shutdown deadline or a guarantee that no next provider request can race with cancellation. Owned cleanup finishes before the result becomes terminal and before capacity is released. File changes/external effects are not rolled back; selected workspaces and separately retained output artifacts survive.
 
 ### Optional result handoff
 

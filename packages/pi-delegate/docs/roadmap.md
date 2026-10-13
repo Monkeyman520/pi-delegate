@@ -40,8 +40,10 @@ Implemented in the current source as optional `delegate.resultFormat: "handoff"`
 
 ### 5. Optional execution budgets
 
-- [ ] Consider explicit, opt-in maximum execution-time and completed-turn limits, separate from advisory soft pressure. Define timing/counting and cancellation semantics before implementation.
-- [ ] On a limit-triggered stop, record the reason, retain available output and usage, and complete owned execution-resource cleanup. Cancellation does not roll back file changes or external side effects.
+Implemented in the current source as `delegate.budget: { maxSeconds?, maxTurns? }`, with original-prompt disclosure, independent advisory pressure, observed-threshold cancellation and partial output/usage retention. Local-provider RPC and controlled lifecycle tests cover this increment; no exact process-stop deadline or billing ceiling is promised. See [usage and limitations](usage.md#optional-execution-budget).
+
+- [x] Provide explicit, opt-in maximum running-time and completed-turn limits, separate from advisory soft pressure, with defined timing/counting and cancellation semantics.
+- [x] On a limit-triggered stop, record the reason, retain available output and usage, and complete owned execution-resource cleanup. Cancellation does not roll back file changes or external side effects.
 - [ ] Evaluate token/cost policies later. Delayed or missing usage and estimated pricing prevent a promise of an exact supplier-billing ceiling.
 
 The lightweight template is delivered; unchecked follow-ups remain candidates, not implementation or release commitments.
