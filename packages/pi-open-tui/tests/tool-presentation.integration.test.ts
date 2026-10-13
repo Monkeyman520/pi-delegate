@@ -16,7 +16,7 @@ import { toolPolicy, compactContent, defaultOutputLines, renderCallSummary, rend
 import openTui from "../src/index.ts";
 import { createReadTool, createWriteTool } from "@earendil-works/pi-coding-agent";
 import { installUserMessageLayout } from "../src/user-message-layout.ts";
-import { MessageRail } from "../src/message-layout.ts";
+import { MessageRail, ToolBoxFrame, resolveBorderGlyphs } from "../src/message-layout.ts";
 
 // Actual upgraded host registration, resolver chain and ToolExecutionComponent, with controlled
 // results and an in-memory terminal. No provider, real terminal/font or IME visual claims.
@@ -938,4 +938,147 @@ test("message rail preserves opaque image rows and routes child coordinates, foc
 	assert.equal(handled.target.component, child); assert.equal(handled.focus, true);
 	assert.equal(events[0]!.x, 2); assert.equal(events[0]!.width, 28);
 	assert.equal(rail.handleMouse({ ...event, x: 0 }), undefined);
+});
+
+test("resolveBorderGlyphs returns correct glyph sets across styles and ascii modes", () => {
+	assert.deepEqual(resolveBorderGlyphs("single", false), { top: "─", topLeft: "┌", left: "│", bottom: "─", bottomLeft: "└" });
+	assert.deepEqual(resolveBorderGlyphs("bold", false), { top: "━", topLeft: "┏", left: "┃", bottom: "━", bottomLeft: "┗" });
+	assert.deepEqual(resolveBorderGlyphs("double", false), { top: "═", topLeft: "╔", left: "║", bottom: "═", bottomLeft: "╚" });
+	assert.deepEqual(resolveBorderGlyphs("dashed", false), { top: "┄", topLeft: "┌", left: "┆", bottom: "┄", bottomLeft: "└" });
+	assert.deepEqual(resolveBorderGlyphs("single", true), { top: "-", topLeft: "+", left: "|", bottom: "-", bottomLeft: "+" });
+	assert.deepEqual(resolveBorderGlyphs("bold", true), { top: "=", topLeft: "+", left: "|", bottom: "=", bottomLeft: "+" });
+	assert.deepEqual(resolveBorderGlyphs("double", true), { top: "=", topLeft: "+", left: "|", bottom: "=", bottomLeft: "+" });
+	assert.deepEqual(resolveBorderGlyphs("dashed", true), { top: "-", topLeft: "+", left: "|", bottom: "-", bottomLeft: "+" });
+});
+
+test("ToolBoxFrame renders 3-sided open box, handles edge toggles, and routes mouse events", () => {
+	const events: Array<{ x: number; y: number; width: number }> = [];
+	const child: Component = {
+		render: () => ["line 1", "line 2"],
+		invalidate() {},
+		handleMouse(event) { events.push(event); return { handled: true, focus: true }; },
+	};
+	const frame = new ToolBoxFrame(child, {
+		top: true,
+		bottom: true,
+		left: true,
+		topChar: "─",
+		topLeftChar: "┌",
+		leftChar: "│",
+		bottomChar: "─",
+		bottomLeftChar: "└",
+		paint: (s) => s,
+	});
+	const lines = frame.render(20);
+	assert.equal(lines.length, 4);
+	assert.ok(lines[0]!.startsWith("┌────"));
+	assert.equal(lines[1], "│ line 1");
+	assert.equal(lines[2], "│ line 2");
+	assert.ok(lines[3]!.startsWith("└────"));
+	assert.ok(lines.every((l) => visibleWidth(l) <= 20));
+
+	// Mouse click on top border (y = 0) is absorbed
+	assert.equal(frame.handleMouse({ type: "click", button: "left", x: 5, y: 0, screenX: 5, screenY: 0, width: 20, height: 4, shift: false, ctrl: false, alt: false }), undefined);
+	// Mouse click on left rail (x = 0) is absorbed
+	assert.equal(frame.handleMouse({ type: "click", button: "left", x: 0, y: 1, screenX: 0, screenY: 1, width: 20, height: 4, shift: false, ctrl: false, alt: false }), undefined);
+	// Mouse click on child (x = 5, y = 1) is translated to x = 3, y = 0
+	frame.handleMouse({ type: "click", button: "left", x: 5, y: 1, screenX: 5, screenY: 1, width: 20, height: 4, shift: false, ctrl: false, alt: false });
+	assert.equal(events.length, 1);
+	assert.equal(events[0]!.x, 3);
+	assert.equal(events[0]!.y, 0);
+
+	// Edge toggling: only top and left
+	const noBottom = new ToolBoxFrame(child, {
+		top: true,
+		bottom: false,
+		left: true,
+		topChar: "─",
+		topLeftChar: "┌",
+		leftChar: "│",
+		bottomChar: "─",
+		bottomLeftChar: "└",
+		paint: (s) => s,
+	});
+	const noBottomLines = noBottom.render(20);
+	assert.equal(noBottomLines.length, 3);
+	assert.ok(noBottomLines[0]!.startsWith("┌────"));
+	assert.equal(noBottomLines[1], "│ line 1");
+	assert.equal(noBottomLines[2], "│ line 2");
+});
+
+test("tool execution renders configurable box borders across styles, edge toggles, and status colors", async (t) => {
+	const f = await fixture(t);
+	f.config.icons.mode = "unicode";
+	f.config.toolBoxBorder = {
+		enabled: true,
+		style: "single",
+		colorMode: "status",
+		top: { enabled: true },
+		bottom: { enabled: true },
+		left: { enabled: true },
+	};
+	const card = f.component("read", "box-border-test", { path: "test.txt" });
+	const initialLines = card.render(80);
+	const initialText = stripTerminalSequences(initialLines.join("\n"));
+	// Running state: top border + left rail + bottom border rendered
+	assert.match(initialText, /^┌─+/m);
+	assert.match(initialText, /│\s+/m);
+	assert.match(initialText, /└─+/m);
+	assert.ok(initialLines.every((l: string) => visibleWidth(l) <= 80));
+
+	// Complete tool: success state
+	card.updateResult(result("success output"));
+	const completedLines = card.render(80);
+	const completedText = stripTerminalSequences(completedLines.join("\n"));
+	assert.match(completedText, /^┌─+/m);
+	assert.match(completedText, /│\s+/m);
+	assert.match(completedText, /└─+/m);
+	assert.ok(completedLines.every((l: string) => visibleWidth(l) <= 80));
+
+	// Double line style
+	f.config.toolBoxBorder.style = "double";
+	const doubleLines = card.render(80);
+	const doubleText = stripTerminalSequences(doubleLines.join("\n"));
+	assert.match(doubleText, /^╔═+/m);
+	assert.match(doubleText, /║\s+/m);
+	assert.match(doubleText, /╚═+/m);
+
+	// Bold style
+	f.config.toolBoxBorder.style = "bold";
+	const boldLines = card.render(80);
+	const boldText = stripTerminalSequences(boldLines.join("\n"));
+	assert.match(boldText, /^┏━+/m);
+	assert.match(boldText, /┃\s+/m);
+	assert.match(boldText, /┗━+/m);
+
+	// Custom characters override
+	f.config.toolBoxBorder.style = "custom";
+	f.config.toolBoxBorder.top.char = "~";
+	f.config.toolBoxBorder.left.char = "!";
+	f.config.toolBoxBorder.bottom.char = "=";
+	const customLines = card.render(80);
+	const customText = stripTerminalSequences(customLines.join("\n"));
+	assert.match(customText, /^~+/m);
+	assert.match(customText, /!\s+/m);
+	assert.match(customText, /^=+/m);
+
+	// Selective edge toggling: disable bottom
+	f.config.toolBoxBorder.bottom.enabled = false;
+	const noBottomLines = card.render(80);
+	const noBottomText = stripTerminalSequences(noBottomLines.join("\n"));
+	assert.match(noBottomText, /^~+/m);
+	assert.doesNotMatch(noBottomText, /^=+/m);
+
+	// ASCII mode check
+	f.config.icons.mode = "ascii";
+	f.config.toolBoxBorder.style = "single";
+	f.config.toolBoxBorder.top.char = undefined;
+	f.config.toolBoxBorder.left.char = undefined;
+	f.config.toolBoxBorder.bottom.char = undefined;
+	f.config.toolBoxBorder.bottom.enabled = true;
+	const asciiLines = card.render(80);
+	const asciiText = stripTerminalSequences(asciiLines.join("\n"));
+	assert.match(asciiText, /^\+-+/m);
+	assert.match(asciiText, /\|\s+/m);
+	assert.match(asciiText, /^\+-+/m);
 });

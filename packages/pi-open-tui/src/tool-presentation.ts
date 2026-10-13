@@ -1,8 +1,8 @@
 import * as host from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, Theme, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme, ThemeColor, ToolRenderers, ToolRendererResolver } from "@earendil-works/pi-coding-agent";
 import { type Component, Box, Container, Spacer, Text, getCapabilities, imageFallback } from "@earendil-works/pi-tui";
 import type { OpenTuiConfig } from "./config.ts";
-import { MessageRail } from "./message-layout.ts";
+import { MessageRail, ToolBoxFrame, resolveBorderGlyphs } from "./message-layout.ts";
 import {
 	type Result, type Status, argumentsText, clean, finite, toolPolicy, statusColor,
 	renderCallSummary, renderChildActivity, compactContent, compactDiffLines, defaultOutputLines,
@@ -143,6 +143,36 @@ export class ToolPresentation {
 	private frame(component: Component, context: ToolRenderContext, state: CardState, nativeShell: ToolRenderers["renderShell"], call: boolean, theme: Theme): Component {
 		return new ToolContainer(() => {
 			const config = this.getConfig();
+			if (config.enabled && config.toolBoxBorder?.enabled) {
+				const isAscii = config.icons.mode === "ascii";
+				const borderCfg = config.toolBoxBorder;
+				const glyphs = resolveBorderGlyphs(borderCfg.style, isAscii);
+				const topChar = borderCfg.top.char ?? glyphs.top;
+				const topLeftChar = borderCfg.style === "custom" && borderCfg.top.char ? borderCfg.top.char : glyphs.topLeft;
+				const leftChar = borderCfg.left.char ?? glyphs.left;
+				const bottomChar = borderCfg.bottom.char ?? glyphs.bottom;
+				const bottomLeftChar = borderCfg.style === "custom" && borderCfg.bottom.char ? borderCfg.bottom.char : glyphs.bottomLeft;
+				const paint = (text: string) => {
+					if (borderCfg.colorMode === "static") {
+						return theme.fg((borderCfg.color as ThemeColor) || "muted", text);
+					}
+					return theme.fg(statusColor(this.status(context)), text);
+				};
+				const showTop = call && borderCfg.top.enabled;
+				const showBottom = (!call || !state.result) && borderCfg.bottom.enabled;
+				const showLeft = borderCfg.left.enabled;
+				return [new ToolBoxFrame(component, {
+					top: showTop,
+					bottom: showBottom,
+					left: showLeft,
+					topChar,
+					topLeftChar,
+					leftChar,
+					bottomChar,
+					bottomLeftChar,
+					paint,
+				})];
+			}
 			if (config.enabled && config.messageLayout === "compact") {
 				return [new MessageRail(component, (text) => theme.fg(statusColor(this.status(context)), text), config.icons.mode === "ascii" ? "|" : "┃")];
 			}

@@ -8,6 +8,23 @@ export type CursorStyle = "block" | "bar" | "underline";
 export type EditorBorderStyle = "surround" | "minimal";
 export type MessageLayout = "normal" | "compact";
 export type ThinkingPeekLines = 0 | 1 | 2;
+export type ToolBoxBorderStyle = "single" | "bold" | "double" | "dashed" | "custom";
+export type ToolBoxBorderColorMode = "status" | "static";
+
+export interface ToolBoxBorderEdgeConfig {
+	enabled: boolean;
+	char?: string;
+}
+
+export interface ToolBoxBorderConfig {
+	enabled: boolean;
+	style: ToolBoxBorderStyle;
+	colorMode: ToolBoxBorderColorMode;
+	color?: string;
+	top: ToolBoxBorderEdgeConfig;
+	bottom: ToolBoxBorderEdgeConfig;
+	left: ToolBoxBorderEdgeConfig;
+}
 
 export type { IconMode } from "./icons.ts";
 
@@ -60,6 +77,7 @@ export interface OpenTuiConfig {
 	telemetry: TelemetryConfig;
 	thinkingPeek: ThinkingPeekConfig;
 	workline: WorklineConfig;
+	toolBoxBorder: ToolBoxBorderConfig;
 }
 
 export const DEFAULT_CONFIG: OpenTuiConfig = {
@@ -103,6 +121,20 @@ export const DEFAULT_CONFIG: OpenTuiConfig = {
 	thinkingPeek: {
 		lines: 1,
 	},
+	toolBoxBorder: {
+		enabled: false,
+		style: "single",
+		colorMode: "status",
+		top: {
+			enabled: true,
+		},
+		bottom: {
+			enabled: true,
+		},
+		left: {
+			enabled: true,
+		},
+	},
 };
 
 export function getConfigPath(): string {
@@ -139,6 +171,14 @@ function normalizeConfig(value: unknown): OpenTuiConfig {
 	config.messageLayout = enumValue(config.messageLayout, ["normal", "compact"], DEFAULT_CONFIG.messageLayout);
 	config.icons.mode = enumValue(config.icons.mode, ["auto", "nerd", "unicode", "ascii"], DEFAULT_CONFIG.icons.mode);
 	config.thinkingPeek.lines = enumValue(config.thinkingPeek.lines, [0, 1, 2], DEFAULT_CONFIG.thinkingPeek.lines);
+	if (config.toolBoxBorder) {
+		config.toolBoxBorder.style = enumValue(config.toolBoxBorder.style, ["single", "bold", "double", "dashed", "custom"], DEFAULT_CONFIG.toolBoxBorder.style);
+		config.toolBoxBorder.colorMode = enumValue(config.toolBoxBorder.colorMode, ["status", "static"], DEFAULT_CONFIG.toolBoxBorder.colorMode);
+		if (config.toolBoxBorder.color !== undefined && typeof config.toolBoxBorder.color !== "string") delete config.toolBoxBorder.color;
+		if (config.toolBoxBorder.top?.char !== undefined && typeof config.toolBoxBorder.top.char !== "string") delete config.toolBoxBorder.top.char;
+		if (config.toolBoxBorder.bottom?.char !== undefined && typeof config.toolBoxBorder.bottom.char !== "string") delete config.toolBoxBorder.bottom.char;
+		if (config.toolBoxBorder.left?.char !== undefined && typeof config.toolBoxBorder.left.char !== "string") delete config.toolBoxBorder.left.char;
+	}
 	return config;
 }
 
