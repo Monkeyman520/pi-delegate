@@ -21,6 +21,7 @@ import {
 } from "../src/pressure.ts";
 import { RpcProcess } from "../src/rpc.ts";
 import { configurationContext } from "./fixtures/configuration-context.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 function registeredTool() {
 	let tool: Parameters<ExtensionAPI["registerTool"]>[0] | undefined;
@@ -479,7 +480,7 @@ function assertRunnerCleaned(records: FixtureRecord[]) {
 		throw new Error("Missing pressure fixture spawn record");
 	expect(existsSync(dirname(spawned.snapshot))).toBe(false);
 	const pid = spawned.pid;
-	expect(() => process.kill(pid, 0)).toThrow();
+	expect(processExited(pid)).toBe(true);
 	expect(records.some((record) => record.kind === "shutdown")).toBe(true);
 }
 

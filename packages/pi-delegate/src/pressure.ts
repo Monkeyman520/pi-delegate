@@ -1,4 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
+import { type Clock as PressureClock, taskClock } from "./clock.ts";
 
 const stageParameters = Type.Object(
 	{
@@ -103,19 +104,9 @@ export function resolvePressure(value: unknown = undefined): PressurePolicy {
 	return policy;
 }
 
-export interface PressureClock {
-	/** Monotonic seconds. */
-	now(): number;
-	/** Returns an idempotent cancellation function. */
-	schedule(callback: () => void, delayMs: number): () => void;
-}
-const monotonicClock: PressureClock = {
-	now: () => performance.now() / 1000,
-	schedule: (callback, delayMs) => {
-		const timer = setTimeout(callback, delayMs);
-		return () => clearTimeout(timer);
-	},
-};
+// Compatibility name for source consumers; the clock is not owned by pressure.
+export type { Clock as PressureClock } from "./clock.ts";
+
 const instructions = {
 	warning:
 		"Prioritize the core goal, stop expanding the task scope, and prepare your final report.",
@@ -137,7 +128,7 @@ export class TaskPressure {
 	constructor(
 		private policy: PressurePolicy,
 		private steer: (message: string) => Promise<unknown>,
-		private clock: PressureClock = monotonicClock,
+		private clock: PressureClock = taskClock,
 	) {
 		this.failure = new Promise<never>((_resolve, reject) => {
 			this.rejectFailure = reject;

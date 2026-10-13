@@ -5,14 +5,16 @@ import { join } from "node:path";
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 import { AgentStatus } from "../src/status.ts";
+import { statusRecords } from "./fixtures/status-records.ts";
 import { statusUI } from "./fixtures/status-ui.ts";
 
 function statusFor(host: Awaited<ReturnType<typeof statusUI>>) {
 	// Hold task time fixed: theme changes must work without task events or refresh timers.
 	// Exact five-second expiry and elapsed-time progression are covered in status.test.ts.
-	const status = new AgentStatus({ now: () => 0, schedule: () => () => {} });
+	const clock = { now: () => 0, schedule: () => () => {} };
+	const status = new AgentStatus(clock);
 	status.bind({ mode: "tui", ui: host.ui });
-	return status;
+	return { status, ...statusRecords(status, clock) };
 }
 
 function required<T>(value: T | undefined): T {
@@ -32,9 +34,9 @@ test.serial(
 	"composed Pi widget has two-column insets and exactly one host-aware gap above/below",
 	async () => {
 		const host = await statusUI();
-		const status = statusFor(host);
+		const { status, accept } = statusFor(host);
 		try {
-			status.add("宽 é 👩‍💻 ".repeat(30));
+			accept("宽 é 👩‍💻 ".repeat(30));
 			const lines = host
 				.frame(80)
 				.split("\n")
@@ -79,13 +81,11 @@ test.serial(
 	"all activity/outcome and pressure roles preserve text, metadata hierarchy, and sanitization",
 	async () => {
 		const host = await statusUI();
-		const status = statusFor(host);
+		const { status, accept } = statusFor(host);
 		const fg = (role: Parameters<typeof host.ui.theme.fg>[0], text: string) =>
 			host.ui.theme.fg(role, text);
 		try {
-			const one = required(
-				status.add("fallback\nSECRET", "\x1b[31mClean\x1b[0m\nSECRET"),
-			);
+			const one = required(accept("fallback\nSECRET", "\x1b[31mClean\x1b[0m"));
 			expect(host.styledFrame()).toContain(fg("text", "1  Clean"));
 			expect(host.styledFrame()).toContain(fg("muted", " · 0s · 0 turns · "));
 			expect(host.styledFrame()).toContain(fg("dim", "pressure: none"));
@@ -123,7 +123,7 @@ test.serial(
 				["failed", "error"],
 				["cancelled", "muted"],
 			] as const) {
-				required(status.add(outcome)).finish(outcome);
+				required(accept(outcome)).finish(outcome);
 				expect(host.styledFrame()).toContain(fg(role, outcome));
 			}
 			for (const width of [1, 2, 8, 20, 50, 80, 160]) {
@@ -141,12 +141,12 @@ test.serial(
 	"real Pi theme switch and custom-file hot reload update existing rows without task events",
 	async () => {
 		const host = await statusUI();
-		const status = statusFor(host);
+		const { status, accept } = statusFor(host);
 		const agentDir = await mkdtemp(join(tmpdir(), "delegate-status-theme-"));
 		const previousDir = process.env.PI_CODING_AGENT_DIR;
 		try {
 			host.tui.start();
-			const running = required(status.add("running row"));
+			const running = required(accept("running row"));
 			running.configured?.({
 				model: { provider: "provider", id: "theme/id" },
 				thinkingLevel: "low",
@@ -156,7 +156,7 @@ test.serial(
 				type: "message_update",
 				assistantMessageEvent: { type: "thinking_start" },
 			});
-			const finished = required(status.add("retained row"));
+			const finished = required(accept("retained row"));
 			finished.configured?.({
 				model: { provider: "other", id: "retained" },
 				thinkingLevel: "off",
@@ -254,10 +254,10 @@ test.serial(
 	"composed configuration rows align connector and activity text, sanitize IDs, and fit resized widths",
 	async () => {
 		const host = await statusUI();
-		const status = statusFor(host);
+		const { status, accept } = statusFor(host);
 		try {
 			for (let i = 1; i <= 10; i++) {
-				const row = required(status.add(`task ${i}`));
+				const row = required(accept(`task ${i}`));
 				row.configured?.({
 					model: {
 						provider: "宽é",

@@ -5,16 +5,15 @@ import type {
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { DelegationStatus } from "./delegate.ts";
 import type { PressureClock } from "./pressure.ts";
 import {
 	type AcceptedPressure,
-	type StatusObserver,
 	safeText,
-	TaskProgress,
+	type TaskProgress,
 	taskClock,
 } from "./progress.ts";
 import type { Capacity } from "./scheduling.ts";
+import { outcomeColor, taskActivity } from "./task-presentation.ts";
 import { formatUsage } from "./usage.ts";
 
 const pressureColors: Record<AcceptedPressure, ThemeColor> = {
@@ -22,19 +21,12 @@ const pressureColors: Record<AcceptedPressure, ThemeColor> = {
 	warning: "warning",
 	urgent: "error",
 };
-const outcomeColors: Record<DelegationStatus, ThemeColor> = {
-	completed: "success",
-	incomplete: "warning",
-	failed: "error",
-	cancelled: "muted",
-};
 
 export type { AcceptedPressure, StatusObserver } from "./progress.ts";
 
 /** Visual owner only: handles are invalid after scope changes; results live elsewhere. */
 export class AgentStatus {
 	private rows = new Map<number, TaskProgress>();
-	private next = 0;
 	private generation = 0;
 	private ui?: ExtensionContext["ui"];
 	private requestRender?: () => void;
@@ -75,20 +67,19 @@ export class AgentStatus {
 	}
 
 	bind(ctx: Pick<ExtensionContext, "mode" | "ui">): void {
-		this.clear(true);
+		this.clear();
 		this.ui = ctx.mode === "tui" ? ctx.ui : undefined;
 		this.mount();
 		this.refresh();
 	}
 
-	clear(resetNumbers = false): void {
+	clear(): void {
 		this.generation++;
 		this.cancelTimer?.();
 		this.cancelTimer = undefined;
 		this.rows.clear();
 		this.ui?.setWidget("pi-delegate:agents", undefined);
 		this.requestRender = undefined;
-		if (resetNumbers) this.next = 0;
 		this.mount();
 		this.refresh();
 	}
@@ -98,27 +89,9 @@ export class AgentStatus {
 		this.ui = undefined;
 	}
 
-	add(task: string, title?: string): StatusObserver | undefined {
-		if (!this.ui) return undefined;
-		const generation = this.generation;
-		const row = new TaskProgress(
-			++this.next,
-			truncateToWidth(
-				safeText((title?.trim() || task).split(/\r?\n/)[0] ?? ""),
-				60,
-			),
-			this.time,
-			() => generation === this.generation && this.rows.get(row.id) === row,
-			this.refresh,
-		);
-		this.show(row);
-		return row;
-	}
-
 	/** Display a shared record without taking ownership of its lifetime. */
 	show(row: TaskProgress): void {
 		if (!this.ui) return;
-		this.next = Math.max(this.next, row.id);
 		this.rows.set(row.id, row);
 		this.mount();
 		this.refresh();
@@ -130,13 +103,7 @@ export class AgentStatus {
 		const fg = (color: ThemeColor, text: string) =>
 			theme ? theme.fg(color, text) : text;
 		const summaries = [...this.rows.values()].map((row) => {
-			const seconds =
-				row.startedAt === undefined
-					? 0
-					: Math.max(
-							0,
-							Math.floor((row.stoppedAt ?? this.time.now()) - row.startedAt),
-						);
+			const seconds = Math.floor(row.elapsedSeconds);
 			return {
 				row,
 				prefix: `${row.id}  `,
@@ -199,14 +166,10 @@ export class AgentStatus {
 				),
 			);
 			lines.push(line(fg("muted", `  │  ${formatUsage(row.usageValue)}`), "…"));
-			const tool = [...row.tools.values()].at(-1);
-			const activity =
-				row.status ??
-				(tool
-					? `toolcall · ${tool}${row.tools.size > 1 ? ` (+${row.tools.size - 1})` : ""}`
-					: row.activity);
+			const tool = row.latestTool;
+			const activity = taskActivity(row, "compact");
 			const color = row.status
-				? outcomeColors[row.status]
+				? outcomeColor(row.status)
 				: !tool &&
 						(row.activity === "queued" ||
 							row.activity === "initializing…" ||

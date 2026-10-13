@@ -57,4 +57,9 @@ input.on("line", async (line) => {
 		send({ type: "agent_settled" });
 	}
 });
-input.on("close", () => process.exit(0));
+input.on("close", async () => {
+	writeFileSync(path("closing"), "");
+	if (process.env.SCHEDULING_HOLD_CLEANUP === "1") await wait("release-close");
+	writeFileSync(path("closed"), "");
+	process.exit(0);
+});

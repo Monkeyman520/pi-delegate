@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { PressureClock } from "../src/pressure.ts";
 import { AgentStatus } from "../src/status.ts";
+import { statusRecords } from "./fixtures/status-records.ts";
 
 class Clock implements PressureClock {
 	seconds = 0;
@@ -42,6 +43,7 @@ function setup() {
 	});
 	return {
 		status,
+		...statusRecords(status, time),
 		time,
 		text: () => status.render(200).join("\n"),
 		renders: () => renders,
@@ -53,9 +55,9 @@ function required<T>(value: T | undefined): T {
 }
 
 test("actual onset excludes initialization; waits progress, turns and activity are current and content-free", () => {
-	const { status, time, text, renders } = setup();
-	const one = required(status.add("first line\nSECRET CONTEXT"));
-	status.add("fallback", "parent title");
+	const { status, accept, records, time, text, renders } = setup();
+	const one = required(accept("first line\nSECRET CONTEXT"));
+	accept("fallback", "parent title");
 	time.advance(20);
 	one.observe({ type: "turn_end" });
 	one.observe({
@@ -104,22 +106,24 @@ test("actual onset excludes initialization; waits progress, turns and activity a
 	expect(text()).toContain("2 turns ·");
 	expect(text()).not.toContain("SECRET");
 	expect(text()).toContain("2  parent title");
+	records.invalidate();
 	status.clear();
 	expect(time.jobs.size).toBe(0);
 });
 
 test("acknowledged pressure is monotone, independent and invalidated with old callbacks", () => {
-	const { status, time, text } = setup();
-	const one = required(status.add("first"));
-	const two = required(status.add("second"));
+	const { status, accept, records, time, text } = setup();
+	const one = required(accept("first"));
+	const two = required(accept("second"));
 	one.accepted("warning");
 	one.accepted("urgent");
 	one.accepted("warning");
 	expect(status.render(200)[1]).toContain("pressure: urgent");
 	expect(status.render(200)[5]).toContain("pressure: none");
 	const oldTimer = required([...time.jobs][0]).callback;
+	records.invalidate();
 	status.clear();
-	const three = required(status.add("third"));
+	const three = required(accept("third"));
 	one.observe({ type: "agent_start" });
 	two.accepted("urgent");
 	one.finish("failed");
@@ -127,21 +131,23 @@ test("acknowledged pressure is monotone, independent and invalidated with old ca
 	expect(text()).toContain("3  third");
 	expect(text()).not.toContain("first");
 	expect(text()).not.toContain("urgent");
+	records.invalidate(true);
 	status.bind({ mode: "rpc", ui: {} as ExtensionContext["ui"] });
 	three.accepted("warning");
-	expect(status.add("non-terminal")).toBeUndefined();
+	expect(accept("non-terminal")).toBeDefined();
 	expect(text()).toBe("");
 	expect(time.jobs.size).toBe(0);
+	records.invalidate(true);
 	status.bind({
 		mode: "tui",
 		ui: { setWidget() {} } as unknown as ExtensionContext["ui"],
 	});
-	status.add("replacement");
+	accept("replacement");
 	one.accepted("urgent");
 	expect(text()).toContain("1  replacement");
 	expect(text()).not.toContain("pressure: urgent");
 	status.close();
-	expect(status.add("after shutdown")).toBeUndefined();
+	expect(accept("after shutdown")).toBeDefined();
 	expect(text()).toBe("");
 	expect(time.jobs.size).toBe(0);
 });
@@ -153,8 +159,8 @@ for (const outcome of [
 	"cancelled",
 ] as const) {
 	test(`${outcome} freezes on settlement and expires at exactly five seconds without reusing identity`, () => {
-		const { status, time, text } = setup();
-		const one = required(status.add("task"));
+		const { status, accept, records, time, text } = setup();
+		const one = required(accept("task"));
 		one.observe({ type: "agent_start" });
 		time.advance(3);
 		one.observe({ type: "turn_end" });
@@ -169,15 +175,16 @@ for (const outcome of [
 		expect(text()).toContain(outcome);
 		time.advance(0.001);
 		expect(text()).toBe("");
-		status.add("next");
+		accept("next");
 		expect(text()).toContain("2  next");
+		records.invalidate();
 		status.clear();
 	});
 }
 
 test("narrow/wide Unicode and control/ANSI metadata cannot expose hidden lines or manipulate rendering", () => {
-	const { status, text } = setup();
-	status.add("fallback\nHIDDEN", "\x1b[31m宽👩‍💻 é\x1b[0m\t title\nHIDDEN");
+	const { status, accept, records, text } = setup();
+	accept("fallback\nHIDDEN", "\x1b[31m宽👩‍💻 é\x1b[0m\t title");
 	for (const width of [1, 2, 8, 20, 80, 160]) {
 		for (const line of status.render(width))
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
@@ -187,12 +194,13 @@ test("narrow/wide Unicode and control/ANSI metadata cannot expose hidden lines o
 	expect(status.render(1)[1]?.startsWith("1")).toBe(true);
 	expect(status.render(80)[1]).toContain("pressure: none");
 	expect(status.render(50)[1]).toContain("0 turns · pressure: none");
+	records.invalidate();
 	status.clear();
 });
 
 test("confirmed configuration expires with terminal rows and old callbacks cannot restore it", () => {
-	const { status, time, text } = setup();
-	const row = required(status.add("configured"));
+	const { status, accept, records, time, text } = setup();
+	const row = required(accept("configured"));
 	const configuration = {
 		model: { provider: "provider", id: "exact/id:variant" },
 		thinkingLevel: "low" as const,
@@ -207,11 +215,12 @@ test("confirmed configuration expires with terminal rows and old callbacks canno
 	expect(text()).toBe("");
 	row.configured?.(configuration);
 	expect(text()).toBe("");
-	const old = required(status.add("old scope"));
-	status.clear(true);
+	const old = required(accept("old scope"));
+	records.invalidate(true);
+	status.clear();
 	old.configured?.(configuration);
 	expect(text()).toBe("");
-	const failed = required(status.add("failed before confirmation"));
+	const failed = required(accept("failed before confirmation"));
 	failed.finish("failed");
 	failed.configured?.(configuration);
 	expect(text()).toContain("model: unconfirmed");
@@ -220,9 +229,9 @@ test("confirmed configuration expires with terminal rows and old callbacks canno
 });
 
 test("capacity and delegated total survive row expiry and branch clearing without reviving old rows", () => {
-	const { status, time, text } = setup();
+	const { status, accept, records, time, text } = setup();
 	status.capacity({ occupied: 1, queued: 2, maximum: 4 });
-	const row = required(status.add("consumed"));
+	const row = required(accept("consumed"));
 	const usage = {
 		input: 8200,
 		output: 1100,
@@ -249,6 +258,7 @@ test("capacity and delegated total survive row expiry and branch clearing withou
 	time.advance(5);
 	expect(text()).not.toContain("consumed");
 	expect(text()).toContain("Delegated total · ↑8.2k");
+	records.invalidate();
 	status.clear();
 	row.usage?.({ ...usage, input: 1000000 });
 	expect(text()).not.toContain("1000k");

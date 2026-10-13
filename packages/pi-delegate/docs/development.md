@@ -141,6 +141,19 @@ tsconfig.json                    Repository-level test type checking
 bun.lock                         Workspace dependency lockfile
 ```
 
+
+### Delegate source ownership
+
+- `delegate.ts` registers tools and scope hooks; `arguments.ts` owns raw argument diagnostics and validation precedence.
+- `delegation.ts` defines execution contracts; `runner.ts` coordinates one child through initialization, execution, result collection and cleanup.
+- `observed-usage.ts` reconciles streaming, completed, readback and late-event consumption; `usage.ts` aggregates accounting across tasks.
+- `rpc.ts` owns JSONL transport/process cleanup; `steering.ts` owns serialized control submissions. Neither delegates cleanup to query views.
+- `tasks.ts` and `progress.ts` retain nonvisual records/observations. `background.ts` owns detached controllers/promises, including record-less execution used by tests.
+- `task-query.ts` projects read-only query snapshots without recharging usage. `task-presentation.ts` shares activity/outcome presentation policy; `status.ts` and `task-panel.ts` own visual lifetime/layout only.
+- `clock.ts` provides neutral monotonic time to independent pressure, budget and observation reducers; their policies and state machines remain separate.
+
+Compact row creation follows `records.accept` → `status.show(record.progress)` in tests and production. Clearing visual rows is not record invalidation; scope hooks explicitly invalidate records.
+
 ## Documentation changes
 
 Keep `README.md` and `README.zh-CN.md` aligned section by section, including commands, examples, capabilities, and limitations. Both READMEs link to each other; detailed guides under `docs/` are maintained in English.

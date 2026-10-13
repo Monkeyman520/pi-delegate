@@ -16,6 +16,7 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { BackgroundTaskDetails } from "../src/background.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function eventually<T>(
@@ -57,7 +58,7 @@ function completions(s: AgentSession) {
 function cleaned(c: Child, logs: string) {
 	expect(existsSync(join(logs, `${c.pid}.closed`))).toBe(true);
 	expect(existsSync(dirname(c.snapshot))).toBe(false);
-	expect(() => process.kill(c.pid, 0)).toThrow();
+	expect(processExited(c.pid)).toBe(true);
 }
 // Real SDK runtime and real gated RPC children. No injected delegation runner or terminal renderer.
 // Environment/argv are process-global, so run these scenarios serially.

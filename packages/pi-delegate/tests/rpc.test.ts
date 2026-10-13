@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { runDelegation } from "../src/delegate.ts";
 import { RpcProcess } from "../src/rpc.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 const fixture = resolve("tests/fixtures/rpc.mjs");
 async function probe(
@@ -36,7 +37,7 @@ function assertSnapshotRemoved(directory: string) {
 		readFileSync(join(directory, files[0]), "utf8"),
 	);
 	expect(existsSync(dirname(snapshot))).toBe(false);
-	expect(() => process.kill(pid, 0)).toThrow();
+	expect(processExited(pid)).toBe(true);
 }
 
 test("fast settlement before prompt response is retained; UTF-8 and Unicode separators survive JSONL", async () => {

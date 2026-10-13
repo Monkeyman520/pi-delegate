@@ -523,3 +523,21 @@ test("safe result text strips OSC/CSI and keeps malformed repeated escapes as in
 	expect(safeText("\x1b[2Jone\ntwo", true)).toBe("one\ntwo");
 	expect(safeText("\x1b]x".repeat(16000))).toBe("x".repeat(16000));
 });
+
+test("completion publishes once, including repeated results after terminal progress is already observed", () => {
+	const records = new TaskRecords();
+	const record = records.accept(taskInput);
+	const snapshots: ReturnType<typeof record.details>[] = [];
+	records.subscribe(() => snapshots.push(record.details()));
+	record.complete(taskResult());
+	expect(snapshots).toHaveLength(1);
+	expect(snapshots[0]).toMatchObject({
+		status: "completed",
+		resultAvailable: true,
+	});
+	const replacement = taskResult();
+	replacement.usage.input = 42;
+	record.complete(replacement);
+	expect(snapshots).toHaveLength(2);
+	expect(snapshots[1]?.usage.input).toBe(42);
+});

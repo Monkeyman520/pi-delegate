@@ -1,28 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
-import type {
-	DelegationOptions,
-	DelegationResult,
-	DelegationStatus,
-} from "./delegate.ts";
+import type { DelegationOptions, DelegationResult } from "./delegation.ts";
 
 import type { SteeringControl, SteeringReceipt } from "./steering.ts";
-import type { TaskDetails, TaskRecord } from "./tasks.ts";
-export const BACKGROUND_USAGE_NOTICE =
-	"Background task usage is reported separately and is not automatically included in Pi parent-session totals.";
-export interface BackgroundTaskDetails {
-	taskId: string;
-	status: "queued" | "initializing" | "running" | DelegationStatus;
-	result?: DelegationResult["details"];
-	usage?: DelegationResult["usage"];
-	accounting: string;
-	task?: TaskDetails;
-}
-export interface BackgroundTaskResult {
-	content: [{ type: "text"; text: string }];
-	details: BackgroundTaskDetails;
-	isError: boolean;
-}
+import { BACKGROUND_USAGE_NOTICE, taskQuery } from "./task-query.ts";
+import type { TaskRecord } from "./tasks.ts";
+
+export type {
+	TaskQueryDetails as BackgroundTaskDetails,
+	TaskQueryResult as BackgroundTaskResult,
+} from "./task-query.ts";
+export { BACKGROUND_USAGE_NOTICE } from "./task-query.ts";
+
+import type { TaskQueryResult as BackgroundTaskResult } from "./task-query.ts";
 export type BackgroundSteeringResult = {
 	content: [{ type: "text"; text: string }];
 	details: { taskId: string } & (
@@ -181,31 +171,17 @@ export class BackgroundTasks {
 		const record = task.record?.valid() ? task.record : undefined;
 		const metadata = record?.details();
 		const result = record?.result ?? task.result;
-		const status = result?.details.status ?? metadata?.status ?? task.phase;
-		return {
-			content: [
-				{
-					type: "text",
-					text: `[Background task ${task.id}: ${status}]\n${BACKGROUND_USAGE_NOTICE}${includeMetadata && metadata ? `\nTask metadata: ${JSON.stringify(metadata)}` : ""}${result ? `\n\n${result.content[0].text}` : "\nAccepted for background execution; this is not a final task result."}`,
-				},
-			],
-			details: {
+		return taskQuery(
+			{
 				taskId: task.id,
-				status,
-				...(result
-					? {
-							result: structuredClone(result.details),
-							usage: metadata?.usage ?? structuredClone(result.usage),
-						}
-					: {}),
-				...(!result && (metadata || task.usage)
-					? { usage: metadata?.usage ?? structuredClone(task.usage) }
-					: {}),
-				accounting: BACKGROUND_USAGE_NOTICE,
-				...(metadata ? { task: metadata } : {}),
+				mode: "background",
+				status: result?.details.status ?? metadata?.status ?? task.phase,
+				result,
+				usage: metadata?.usage ?? result?.usage ?? task.usage,
+				task: metadata,
 			},
-			isError: result?.isError ?? false,
-		};
+			includeMetadata ? "background" : "acknowledgement",
+		);
 	}
 
 	/** Invalidate task access synchronously, then await execution-resource cleanup. */

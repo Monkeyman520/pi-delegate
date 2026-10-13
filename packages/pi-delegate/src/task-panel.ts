@@ -9,6 +9,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { safeText } from "./progress.ts";
+import { outcomeColor } from "./task-presentation.ts";
 import type { TaskGroup, TaskRecords, TaskSummary } from "./tasks.ts";
 import { formatUsage } from "./usage.ts";
 
@@ -280,14 +281,7 @@ export class TaskPanel {
 						`${item.taskId === selected?.taskId ? "›" : " "} #${item.label}  ${item.title}`,
 					),
 				);
-				const statusRole =
-					item.status === "failed"
-						? "error"
-						: item.status === "completed"
-							? "success"
-							: item.status === "incomplete"
-								? "warning"
-								: "muted";
+				const statusRole = outcomeColor(item.status);
 				body.push(
 					`  ${inner < 60 ? (item.mode === "background" ? "bg" : "sync") : item.mode} · ${theme.fg(statusRole, item.status)} · ${Math.floor(item.elapsedSeconds)}s · ${item.turns} ${item.turns === 1 ? "turn" : "turns"}${item.cancelling ? " · cancelling" : ""}${item.resultAvailable ? " · result available" : ""}`,
 					"",

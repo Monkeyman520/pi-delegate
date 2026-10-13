@@ -15,6 +15,7 @@ import type {
 	PressureFixtureCall,
 	PressureTrace,
 } from "./pressure-provider.ts";
+import { processExited } from "./process-exit.ts";
 
 export type Message = AgentSession["messages"][number];
 export interface Child {
@@ -147,14 +148,7 @@ export class SteeringHost {
 	}
 	async cleaned(child: Child) {
 		await eventually(
-			() => {
-				try {
-					process.kill(child.pid, 0);
-					return false;
-				} catch {
-					return !existsSync(dirname(child.snapshot));
-				}
-			},
+			() => processExited(child.pid) && !existsSync(dirname(child.snapshot)),
 			Boolean,
 			"child process and snapshot cleanup",
 		);

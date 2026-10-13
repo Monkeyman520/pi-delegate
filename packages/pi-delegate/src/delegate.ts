@@ -1,608 +1,45 @@
-import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-	type AssistantMessage,
-	type Static,
-	Type,
-	type Usage,
-} from "@earendil-works/pi-ai";
+import { type Static, Type, type Usage } from "@earendil-works/pi-ai";
 import {
 	defineTool,
 	type ExtensionAPI,
 	type ExtensionToolContext,
-	getPackageDir,
-	type JsonAgentSessionEvent,
 	type RpcExtensionUIRequest,
 	type RpcExtensionUIResponse,
-	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
-import { BACKGROUND_USAGE_NOTICE, BackgroundTasks } from "./background.ts";
 import {
-	type BudgetStop,
-	budgetParameters,
-	type ExecutionBudget,
-	resolveBudget,
-	TaskBudget,
-} from "./budget.ts";
+	prepareDelegationArguments,
+	validatePreparedArguments,
+} from "./arguments.ts";
+import { BackgroundTasks } from "./background.ts";
+import { budgetParameters } from "./budget.ts";
 import {
-	type ConfigurationDetails,
 	captureConfiguration,
-	isThinkingLevel,
 	modelParameter,
-	type TaskConfiguration,
 	thinkingParameter,
-	validateSelection,
 } from "./configuration.ts";
-import { selectCwd, validateCwd, validateCwdInput } from "./cwd.ts";
-import {
-	CHILD_ENV,
-	captureInheritance,
-	DELEGATE_TOOL,
-	INIT_COMMAND,
-	INIT_ENTRY,
-	type InheritanceSnapshot,
-	SNAPSHOT_ENV,
-} from "./inheritance.ts";
-import { ObservedOutput } from "./observed-output.ts";
-import { formatDelegationOutput } from "./output.ts";
-import {
-	type PressureOverrides,
-	pressureParameters,
-	resolvePressure,
-	TaskPressure,
-	validatePressureInput,
-} from "./pressure.ts";
-import {
-	delegationPrompt,
-	type ResultFormat,
-	resultFormatParameter,
-	validateResultFormat,
-} from "./result-format.ts";
-import { type RpcDiagnostics, RpcProcess } from "./rpc.ts";
+import { selectCwd } from "./cwd.ts";
+import { type DelegationOptions, failedResult } from "./delegation.ts";
+import { captureInheritance, DELEGATE_TOOL } from "./inheritance.ts";
+import { pressureParameters, resolvePressure } from "./pressure.ts";
+import { resultFormatParameter } from "./result-format.ts";
+import { runDelegation } from "./runner.ts";
 import { Admission, concurrencyLimit } from "./scheduling.ts";
-import { AgentStatus, type StatusObserver } from "./status.ts";
-import { type SteeringControl, TaskSteering } from "./steering.ts";
+import { AgentStatus } from "./status.ts";
 import { registerTaskPanel } from "./task-panel.ts";
+import { taskQuery } from "./task-query.ts";
 import { type TaskRecord, TaskRecords } from "./tasks.ts";
-import { entriesUsage, sumUsage, UsageLedger } from "./usage.ts";
+import { sumUsage, UsageLedger } from "./usage.ts";
 
-export function resolveCli(): string {
-	const root = getPackageDir();
-	for (const path of [
-		join(root, "dist/bundle/cli.js"),
-		join(root, "dist/cli.js"),
-	]) {
-		if (existsSync(path)) return path;
-	}
-	throw new Error("Cannot locate the Pi CLI in the installed host package");
-}
-
-export interface DelegationOptions {
-	cwd: string;
-	args: string[];
-	snapshot: InheritanceSnapshot;
-	requestedConfiguration?: TaskConfiguration;
-	task: string;
-	context?: string;
-	resultFormat?: ResultFormat;
-	pressure?: PressureOverrides;
-	budget?: ExecutionBudget;
-	status?: StatusObserver;
-	taskRecord?: TaskRecord;
-	onCwd?: (cwd: string) => void;
-	onSteeringControl?: (control: SteeringControl) => void;
-	onPhase?: (phase: "queued" | "initializing" | "running") => void;
-	onUsage?: (usage: Usage) => void;
-	signal?: AbortSignal;
-	ui?: (
-		request: RpcExtensionUIRequest,
-	) => Promise<RpcExtensionUIResponse | undefined>;
-	cliPath?: string;
-	env?: NodeJS.ProcessEnv;
-}
-
-export type DelegationStatus =
-	| "completed"
-	| "incomplete"
-	| "failed"
-	| "cancelled";
-
-export type StartupStage =
-	| "prepare"
-	| "spawn"
-	| "initialize"
-	| "configure"
-	| "submit";
-
-export interface DelegationDetails
-	extends Omit<Awaited<ReturnType<typeof formatDelegationOutput>>, "text"> {
-	status: DelegationStatus;
-	taskId?: string;
-	stopReason?: AssistantMessage["stopReason"];
-	sessionId?: string;
-	error?: string;
-	budget?: ExecutionBudget;
-	budgetStop?: BudgetStop;
-	partialOutput?: boolean;
-	usagePartial?: boolean;
-	startupDiagnostics?: RpcDiagnostics & { stage: StartupStage };
-	configuration?: ConfigurationDetails;
-	/** Absolute startup directory, present only after the child has spawned. */
-	cwd?: string;
-}
-
-export interface DelegationResult {
-	content: [{ type: "text"; text: string }];
-	details: DelegationDetails;
-	usage: Usage;
-	isError: boolean;
-}
-
-function failedResult(
-	error: unknown,
-	cancelled = false,
-	details: Omit<DelegationDetails, "status" | "error"> = {},
-	usage = sumUsage([]),
-): DelegationResult {
-	const status = cancelled ? "cancelled" : "failed";
-	const message = cancelled
-		? "Delegation cancelled"
-		: error instanceof Error
-			? error.message
-			: String(error);
-	const diagnostics = cancelled ? undefined : details.startupDiagnostics;
-	const diagnosticText = diagnostics
-		? `\nStartup stage: ${diagnostics.stage}${diagnostics.stderr ? `\n\nChild stderr${diagnostics.stderrTruncated ? " (tail truncated to 16 KiB)" : ""}:\n${diagnostics.stderr}` : ""}`
-		: "";
-	return {
-		content: [
-			{
-				type: "text",
-				text: `[Delegation ${status}: ${message}]${diagnosticText}${details.fullOutputPath ? `\nPartial output saved to: ${details.fullOutputPath}. Use read to retrieve it.` : ""}`,
-			},
-		],
-		details: { ...details, status, error: message },
-		usage,
-		isError: true,
-	};
-}
-
-export async function runDelegation(
-	options: DelegationOptions,
-): Promise<DelegationResult> {
-	options.onPhase?.("initializing");
-	let directory: string | undefined;
-	let rpc: RpcProcess | undefined;
-	let settlement: ReturnType<RpcProcess["waitForSettled"]> | undefined;
-	let startupStage: StartupStage | undefined = "prepare";
-	let primaryFailure: { error: unknown } | undefined;
-	const started = () => {
-		startupStage = undefined;
-		rpc?.discardDiagnostics();
-	};
-	let budget: TaskBudget | undefined;
-	let rejectBudget!: (error: Error) => void;
-	const budgetStopped = new Promise<never>((_resolve, reject) => {
-		rejectBudget = reject;
-	});
-	void budgetStopped.catch(() => {});
-	const observedOutput = new ObservedOutput();
-	let assistantCount = 0;
-	let observationVersion = 0;
-	let readbackVersion = 0;
-	let pressure: TaskPressure | undefined;
-	let unsubscribeEvents: (() => void) | undefined;
-	let steering: TaskSteering | undefined;
-	let usage: Usage | undefined;
-	let observedUsage = sumUsage([]);
-	let completedUsage = sumUsage([]);
-	let streamingUsage: Usage | undefined;
-	let streamingVersion = 0;
-	let budgetEntries: SessionEntry[] | undefined;
-	const observedMessages = new Map<string, { usage: Usage; version: number }>();
-	const retainedBudgetUsage = (): Usage => {
-		if (!budgetEntries) return observedUsage;
-		let index = 0;
-		const represented = new Set<string>();
-		const entries = budgetEntries.map((entry) => {
-			if (entry.type !== "message") return entry;
-			const message = entry.message;
-			const key =
-				message.role === "assistant"
-					? `assistant:${index++}`
-					: message.role === "toolResult"
-						? `tool:${message.toolCallId}`
-						: undefined;
-			if (!key) return entry;
-			represented.add(key);
-			const observed = observedMessages.get(key);
-			if (
-				key === `assistant:${assistantCount}` &&
-				streamingUsage &&
-				streamingVersion > readbackVersion
-			)
-				return { ...entry, message: { ...message, usage: streamingUsage } };
-			return observed && observed.version > readbackVersion
-				? { ...entry, message: { ...message, usage: observed.usage } }
-				: entry;
-		});
-		return sumUsage([
-			entriesUsage(entries),
-			...[...observedMessages]
-				.filter(([key]) => !represented.has(key))
-				.map(([, value]) => value.usage),
-			...(streamingUsage && !represented.has(`assistant:${assistantCount}`)
-				? [streamingUsage]
-				: []),
-			...[...pendingToolUsage]
-				.filter(([id]) => !represented.has(`tool:${id}`))
-				.map(([, value]) => value),
-		]);
-	};
-	const pendingToolUsage = new Map<string, Usage>();
-	const details: Omit<DelegationDetails, "status" | "error"> =
-		options.requestedConfiguration
-			? {
-					configuration: {
-						requested: structuredClone(options.requestedConfiguration),
-					},
-				}
-			: {};
-	try {
-		let result: DelegationResult;
-		try {
-			options.signal?.throwIfAborted();
-			validateResultFormat(options.resultFormat);
-			const effectiveBudget = resolveBudget(options.budget);
-			if (effectiveBudget) details.budget = effectiveBudget;
-			validateCwd(options.cwd);
-			const policy = resolvePressure(options.pressure);
-			directory = await mkdtemp(join(tmpdir(), "pi-delegate-"));
-			const snapshotPath = join(directory, "inheritance.json");
-			await writeFile(snapshotPath, JSON.stringify(options.snapshot), {
-				mode: 0o600,
-			});
-			options.signal?.throwIfAborted();
-			// Snapshot creation awaits filesystem work; recheck immediately before spawn.
-			validateCwd(options.cwd);
-			startupStage = "spawn";
-			rpc = new RpcProcess(
-				process.versions.bun ? "node" : process.execPath,
-				[options.cliPath ?? resolveCli(), "--mode", "rpc", ...options.args],
-				{
-					cwd: options.cwd,
-					env: {
-						...process.env,
-						...options.env,
-						[CHILD_ENV]: "1",
-						[SNAPSHOT_ENV]: snapshotPath,
-					},
-				},
-				options.signal,
-				options.ui,
-			);
-			rpc.child.once("spawn", () => {
-				details.cwd = options.cwd;
-				options.onCwd?.(options.cwd);
-				startupStage = "initialize";
-			});
-			await rpc.request("prompt", { message: `/${INIT_COMMAND}` });
-			const { entries } = await rpc.request<{ entries: SessionEntry[] }>(
-				"get_entries",
-			);
-			observedUsage = entriesUsage(entries);
-			assistantCount = entries.filter(
-				(entry) =>
-					entry.type === "message" && entry.message.role === "assistant",
-			).length;
-			completedUsage = observedUsage;
-			options.onUsage?.(observedUsage);
-			const initialized = [...entries]
-				.reverse()
-				.find(
-					(entry) => entry.type === "custom" && entry.customType === INIT_ENTRY,
-				);
-			const initialization =
-				initialized?.type === "custom"
-					? (initialized.data as { ok?: boolean; error?: string } | undefined)
-					: undefined;
-			if (!initialization?.ok)
-				throw new Error(
-					initialization?.error ?? "Child initialization handshake failed",
-				);
-
-			if (details.configuration) {
-				startupStage = "configure";
-				const requested = details.configuration.requested;
-				await rpc.request("set_model", {
-					provider: requested.model.provider,
-					modelId: requested.model.id,
-				});
-				await rpc.request("set_thinking_level", {
-					level: requested.thinkingLevel,
-				});
-				const state = await rpc.request<{
-					model?: { provider?: string; id?: string };
-					thinkingLevel?: unknown;
-				}>("get_state");
-				if (
-					state.model?.provider !== requested.model.provider ||
-					state.model?.id !== requested.model.id ||
-					!isThinkingLevel(state.thinkingLevel)
-				)
-					throw new Error("Child startup configuration verification failed");
-				options.signal?.throwIfAborted();
-				const effective: TaskConfiguration = {
-					model: { ...requested.model },
-					thinkingLevel: state.thinkingLevel,
-				};
-				details.configuration.effective = effective;
-				options.status?.configured?.(effective);
-			}
-			settlement = rpc.waitForSettled();
-			const child = rpc;
-			const taskSteering = new TaskSteering((message) =>
-				child.request("steer", { message }),
-			);
-			steering = taskSteering;
-			options.onSteeringControl?.(steering.control);
-			pressure = new TaskPressure(policy, async (message) => {
-				const response = await taskSteering.submit(message);
-				options.status?.accepted(
-					message.startsWith("[pi-delegate pressure: urgent]")
-						? "urgent"
-						: "warning",
-				);
-				return response;
-			});
-			if (effectiveBudget)
-				budget = new TaskBudget(effectiveBudget, (cause) => {
-					if (options.signal?.aborted) return;
-					details.budgetStop = cause;
-					pressure?.dispose();
-					steering?.close();
-					// Initiate cancellation now, never ask the model for a wrap-up answer.
-					void child.request("abort", {}, 250).catch(() => {});
-					rejectBudget(new Error("Execution budget reached"));
-				});
-			unsubscribeEvents = rpc.subscribe((record) => {
-				// Keep usage even if cancellation/transport failure prevents get_entries.
-				// Streaming updates are cumulative; only message_end commits a message.
-				const event = record as JsonAgentSessionEvent;
-				if (effectiveBudget) observedOutput.observe(event);
-				if (event.type === "message_start") {
-					const message = event.message;
-					if (message.role === "assistant") {
-						streamingUsage = message.usage;
-						streamingVersion = ++observationVersion;
-					}
-					// Tool results already carry usage at start, before async end hooks finish.
-					if (message.role === "toolResult" && message.usage)
-						pendingToolUsage.set(message.toolCallId, message.usage);
-				}
-				if (event.type === "message_update") {
-					streamingUsage = event.usage;
-					streamingVersion = ++observationVersion;
-				}
-				if (event.type === "message_end") {
-					const message = event.message;
-					if (message.role === "assistant" || message.role === "toolResult") {
-						const key =
-							message.role === "assistant"
-								? `assistant:${assistantCount++}`
-								: `tool:${message.toolCallId}`;
-						if (effectiveBudget && message.usage)
-							observedMessages.set(key, {
-								usage: message.usage,
-								version: ++observationVersion,
-							});
-						if (message.usage)
-							completedUsage = sumUsage([completedUsage, message.usage]);
-						if (message.role === "assistant") {
-							streamingUsage = undefined;
-						} else pendingToolUsage.delete(message.toolCallId);
-					}
-				}
-				observedUsage = sumUsage([
-					completedUsage,
-					...pendingToolUsage.values(),
-					...(streamingUsage ? [streamingUsage] : []),
-				]);
-				if (usage === undefined) options.onUsage?.(observedUsage);
-				if (record.type === "agent_start") {
-					started();
-					options.onPhase?.("running");
-				}
-				steering?.observe(record);
-				budget?.observe(record);
-				pressure?.observe(record);
-				options.status?.observe(record);
-			});
-			options.signal?.addEventListener("abort", pressure.dispose, {
-				once: true,
-			});
-			if (budget)
-				options.signal?.addEventListener("abort", budget.dispose, {
-					once: true,
-				});
-			options.signal?.addEventListener("abort", steering.close, { once: true });
-			if (options.signal?.aborted) steering.close();
-			const message = delegationPrompt(
-				options.task,
-				options.context,
-				options.resultFormat,
-				effectiveBudget,
-			);
-			startupStage = "submit";
-			const accepted = await Promise.race([
-				rpc.request<{ disposition: string }>("prompt", { message }),
-				budgetStopped,
-			]);
-			if (accepted.disposition !== "started")
-				throw new Error(`Child task did not start: ${accepted.disposition}`);
-			started();
-			steering.confirmStart();
-			if (details.budgetStop) throw new Error("Execution budget reached");
-			await Promise.race([settlement.promise, pressure.failure, budgetStopped]);
-			if (details.budgetStop) throw new Error("Execution budget reached");
-			pressure.dispose();
-			budget?.dispose();
-			// Projected get_messages can omit a length response during host recovery.
-			// Persisted entries retain every attempt, including the final truncated answer.
-			const { entries: resultEntries } = await rpc.request<{
-				entries: SessionEntry[];
-			}>("get_entries");
-			const messages = resultEntries.flatMap((entry) =>
-				entry.type === "message" ? [entry.message] : [],
-			);
-			usage = entriesUsage(resultEntries);
-			options.onUsage?.(usage);
-			const final = [...messages]
-				.reverse()
-				.find((item) => item.role === "assistant");
-			if (final?.role !== "assistant")
-				throw new Error("Child completed without an assistant result");
-			details.stopReason = final.stopReason;
-			let status: DelegationStatus;
-			let error: string | undefined;
-			switch (final.stopReason) {
-				case "stop":
-					status = "completed";
-					break;
-				case "length":
-					status = "incomplete";
-					break;
-				case "error":
-					status = "failed";
-					error = final.errorMessage ?? "Child model run failed";
-					break;
-				case "aborted":
-					status = "cancelled";
-					error = final.errorMessage ?? "Child task cancelled";
-					break;
-				default:
-					status = "failed";
-					error = `Child did not finish with a final answer: ${final.stopReason}`;
-			}
-			const text = final.content
-				.filter((block) => block.type === "text")
-				.map((block) => block.text)
-				.join("\n");
-			const state = await rpc.request<{ sessionId: string }>("get_state");
-			details.sessionId = state.sessionId;
-			options.signal?.throwIfAborted();
-			const { text: resultText, ...outputDetails } =
-				await formatDelegationOutput(text, options.signal);
-			Object.assign(details, outputDetails);
-			const notice =
-				status === "completed"
-					? ""
-					: status === "incomplete"
-						? "[Delegation incomplete: generation reached its length limit; the answer may be unfinished.]"
-						: `[Delegation ${status}: ${error}]`;
-			result = {
-				content: [
-					{
-						type: "text",
-						text: notice ? `${notice}\n\n${resultText}` : resultText,
-					},
-				],
-				details: {
-					...details,
-					...outputDetails,
-					status,
-					...(error === undefined ? {} : { error }),
-				},
-				usage,
-				isError: status === "failed" || status === "cancelled",
-			};
-		} catch (error) {
-			if (details.budgetStop && rpc) {
-				try {
-					// Bounded cleanup readback, not an execution/reporting grace period.
-					const { entries } = await rpc.request<{ entries: SessionEntry[] }>(
-						"get_entries",
-						{},
-						250,
-					);
-					budgetEntries = entries;
-					readbackVersion = observationVersion;
-					usage = retainedBudgetUsage();
-					options.onUsage?.(usage);
-				} catch {
-					/* Retain event observations if final entries are unavailable. */
-				}
-			}
-			primaryFailure = { error };
-			throw error;
-		} finally {
-			budget?.dispose();
-			if (budget) options.signal?.removeEventListener("abort", budget.dispose);
-			steering?.close();
-			if (steering)
-				options.signal?.removeEventListener("abort", steering.close);
-			pressure?.dispose();
-			if (!details.budgetStop) {
-				unsubscribeEvents?.();
-				unsubscribeEvents = undefined;
-			}
-			if (pressure)
-				options.signal?.removeEventListener("abort", pressure.dispose);
-			settlement?.dispose();
-			try {
-				await rpc?.stop();
-			} finally {
-				unsubscribeEvents?.();
-				if (directory) await rm(directory, { recursive: true, force: true });
-			}
-		}
-		options.signal?.throwIfAborted();
-		return result;
-	} catch (error) {
-		if (details.budgetStop) {
-			const stop = details.budgetStop;
-			const message = `Execution budget reached: ${stop.dimension} limit ${stop.limit}, observed ${stop.observed}`;
-			const { text, ...outputDetails } = await formatDelegationOutput(
-				observedOutput.text(),
-			);
-			const finalUsage = retainedBudgetUsage();
-			options.onUsage?.(finalUsage);
-			return {
-				content: [
-					{
-						type: "text",
-						text: `[Delegation cancelled: ${message}. Partial output; usage may be partial.]${text ? `\n\n${text}` : ""}`,
-					},
-				],
-				details: {
-					...details,
-					...outputDetails,
-					status: "cancelled",
-					error: message,
-					partialOutput: true,
-					usagePartial: true,
-				},
-				usage: finalUsage,
-				isError: true,
-			};
-		}
-		if (startupStage && !options.signal?.aborted) {
-			details.startupDiagnostics = {
-				stage: startupStage,
-				...(rpc?.diagnostics() ?? { stderr: "", stderrTruncated: false }),
-			};
-		}
-		return failedResult(
-			primaryFailure ? primaryFailure.error : error,
-			options.signal?.aborted,
-			details,
-			usage ?? observedUsage,
-		);
-	}
-}
+// Preserve the existing source import seam while internals depend on contracts/runner directly.
+export type {
+	DelegationDetails,
+	DelegationOptions,
+	DelegationResult,
+	DelegationStatus,
+	StartupStage,
+} from "./delegation.ts";
+export { resolveCli, runDelegation } from "./runner.ts";
 
 async function forwardUi(
 	ctx: ExtensionToolContext,
@@ -753,54 +190,7 @@ export function registerDelegate(
 				"Run a self-contained task in a fresh subagent with inherited tools except delegation. The parent conversation is not copied; supply necessary context. By default the subagent shares the parent working directory; optional cwd selects another existing directory, not a sandbox. Coordinate file edits. By default, wait for the result. With background:true, return a taskId without waiting; completion does not send an automatic message or wake the parent; use delegate_list to discover tasks and delegate_status for details. delegate_steer/delegate_cancel manage background tasks only. Large results include a full-output file path.",
 			parameters,
 			prepareArguments(args) {
-				if (args === null || typeof args !== "object" || Array.isArray(args))
-					return args as Static<typeof parameters>;
-				const prepared = { ...(args as Record<string, unknown>) };
-				// Private, clone-safe diagnostic: Pi clones prepared args before execute.
-				// Never trust an internal diagnostic supplied by a caller.
-				delete prepared.__piDelegatePressureError;
-				delete prepared.__piDelegateSelectionError;
-				delete prepared.__piDelegateCwdError;
-				delete prepared.__piDelegateResultFormatError;
-				delete prepared.__piDelegateBudgetError;
-				try {
-					resolveBudget(prepared.budget);
-				} catch (error) {
-					delete prepared.budget;
-					prepared.__piDelegateBudgetError =
-						error instanceof Error ? error.message : String(error);
-				}
-				try {
-					validateResultFormat(prepared.resultFormat);
-				} catch (error) {
-					delete prepared.resultFormat;
-					prepared.__piDelegateResultFormatError =
-						error instanceof Error ? error.message : String(error);
-				}
-				try {
-					validateCwdInput(prepared.cwd);
-				} catch (error) {
-					delete prepared.cwd;
-					prepared.__piDelegateCwdError =
-						error instanceof Error ? error.message : String(error);
-				}
-				try {
-					validateSelection(prepared.model, prepared.thinkingLevel);
-				} catch (error) {
-					delete prepared.model;
-					delete prepared.thinkingLevel;
-					prepared.__piDelegateSelectionError =
-						error instanceof Error ? error.message : String(error);
-				}
-				try {
-					validatePressureInput(prepared.pressure);
-				} catch (error) {
-					// Preserve raw rejection without letting host validation bypass failedResult.
-					delete prepared.pressure;
-					prepared.__piDelegatePressureError =
-						error instanceof Error ? error.message : String(error);
-				}
-				return prepared as Static<typeof parameters>;
+				return prepareDelegationArguments(args) as Static<typeof parameters>;
 			},
 			async execute(_id, params, signal, _onUpdate, ctx) {
 				const controller = new AbortController();
@@ -811,39 +201,7 @@ export function registerDelegate(
 				let record: TaskRecord | undefined;
 				try {
 					combined.throwIfAborted();
-					const budgetError = (
-						params as Static<typeof parameters> & {
-							__piDelegateBudgetError?: string;
-						}
-					).__piDelegateBudgetError;
-					if (budgetError !== undefined) throw new Error(budgetError);
-					const budget = resolveBudget(params.budget);
-					const resultFormatError = (
-						params as Static<typeof parameters> & {
-							__piDelegateResultFormatError?: string;
-						}
-					).__piDelegateResultFormatError;
-					if (resultFormatError !== undefined)
-						throw new Error(resultFormatError);
-					validateResultFormat(params.resultFormat);
-					const cwdError = (
-						params as Static<typeof parameters> & {
-							__piDelegateCwdError?: string;
-						}
-					).__piDelegateCwdError;
-					if (cwdError !== undefined) throw new Error(cwdError);
-					const selectionError = (
-						params as Static<typeof parameters> & {
-							__piDelegateSelectionError?: string;
-						}
-					).__piDelegateSelectionError;
-					if (selectionError !== undefined) throw new Error(selectionError);
-					const preparationError = (
-						params as Static<typeof parameters> & {
-							__piDelegatePressureError?: string;
-						}
-					).__piDelegatePressureError;
-					if (preparationError !== undefined) throw new Error(preparationError);
+					const budget = validatePreparedArguments(params);
 					if (!params.task.trim())
 						throw new Error("Delegation task must not be blank");
 					if (params.background && ctx.mode !== "tui" && ctx.mode !== "rpc")
@@ -929,28 +287,18 @@ export function registerDelegate(
 			const view = background.query(taskId);
 			if (view.details.task) return view;
 		}
-		const result = record.result;
 		const task = record.details();
-		const accounting = backgroundMode
-			? BACKGROUND_USAGE_NOTICE
-			: "Synchronous usage is accounted through the initiating delegate result; queries do not charge it again.";
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: `[${backgroundMode ? "Background" : "Synchronous"} task ${taskId}: ${task.status}]\n${accounting}\nTask metadata: ${JSON.stringify(task)}\n${result?.content[0].text ?? "No final result available."}`,
-				},
-			],
-			details: {
+		return taskQuery(
+			{
 				taskId,
+				mode: record.input.mode,
 				status: task.status,
 				task,
-				...(result ? { result: structuredClone(result.details) } : {}),
-				usage: structuredClone(record.progress.usageValue),
-				accounting,
+				result: record.result,
+				usage: task.usage,
 			},
-			isError: result?.isError ?? false,
-		};
+			"record",
+		);
 	};
 	pi.registerTool(
 		defineTool({

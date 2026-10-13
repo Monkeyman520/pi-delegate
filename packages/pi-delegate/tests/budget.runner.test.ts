@@ -14,6 +14,7 @@ import {
 	runDelegation,
 } from "../src/delegate.ts";
 import { configurationContext } from "./fixtures/configuration-context.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 async function fixture(
 	scenario: string,
@@ -102,7 +103,7 @@ for (const scenario of [
 			])
 				expect(prompt?.message).toContain(text);
 			const spawned = trace.find((r) => r.kind === "spawn");
-			expect(() => process.kill(Number(spawned?.pid), 0)).toThrow();
+			expect(processExited(Number(spawned?.pid))).toBe(true);
 			expect(existsSync(dirname(String(spawned?.snapshot)))).toBe(false);
 			expect(existsSync(options.cwd)).toBe(true);
 			if (scenario === "large") {

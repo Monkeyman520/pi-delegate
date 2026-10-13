@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +9,7 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { runDelegation } from "../src/delegate.ts";
+import { worktreeGit as git } from "./fixtures/worktree-provider.ts";
 
 const root = process.cwd();
 const skillPath = resolve("skills/delegate-worktree/SKILL.md");
@@ -64,20 +64,6 @@ test("Pi package discovery loads the bundled worktree skill without a personal c
 		await rm(directory, { recursive: true, force: true });
 	}
 });
-
-function git(cwd: string, ...args: string[]): string {
-	const result = spawnSync("git", ["-C", cwd, ...args], {
-		encoding: "utf8",
-		env: {
-			...process.env,
-			GIT_CONFIG_NOSYSTEM: "1",
-			GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
-		},
-	});
-	if (result.status !== 0)
-		throw new Error(result.stderr || result.error?.message || "git failed");
-	return result.stdout.trim();
-}
 
 test("skill workflow: explicit baseline, parallel worktrees, added-file artifact, review/integration before cleanup, failed work retained", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "delegate-worktree-"));

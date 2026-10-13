@@ -5,10 +5,11 @@ import type {
 	ConfigurationDetails,
 	TaskConfiguration,
 } from "./configuration.ts";
-import type { DelegationResult, DelegationStatus } from "./delegate.ts";
+import type { DelegationResult, DelegationStatus } from "./delegation.ts";
 import type { PressureClock, PressurePolicy } from "./pressure.ts";
 import { safeText, TaskProgress, taskClock } from "./progress.ts";
 import type { SteeringControl } from "./steering.ts";
+import { taskActivity } from "./task-presentation.ts";
 
 export type TaskMode = "synchronous" | "background";
 export type TaskGroup = "all" | "active" | "finished";
@@ -102,8 +103,8 @@ export class TaskRecord {
 		this.progress.usageValue = structuredClone(result.usage);
 		this.control = undefined;
 		this.cancelling = false;
-		this.progress.finish(result.details.status);
-		this.notify();
+		// finish publishes the complete snapshot once; repeated completion still publishes new details.
+		if (!this.progress.finish(result.details.status)) this.notify();
 		return identified;
 	}
 	summary(): TaskSummary {
@@ -130,11 +131,7 @@ export class TaskRecord {
 			status: p.status ?? p.executionPhase,
 			elapsedSeconds: p.elapsedSeconds,
 			turns: p.turns,
-			activity:
-				p.status ??
-				(p.tools.size
-					? `toolcall · ${truncateToWidth([...p.tools.values()].at(-1) ?? "", 120)}${p.tools.size > 1 ? ` (+${p.tools.size - 1})` : ""}`
-					: p.activity),
+			activity: taskActivity(p, "summary"),
 			resultAvailable: !!this.result,
 			cancelling: this.cancelling,
 			controls: {

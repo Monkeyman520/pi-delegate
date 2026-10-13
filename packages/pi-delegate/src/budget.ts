@@ -1,6 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { PressureClock } from "./pressure.ts";
-import { taskClock } from "./progress.ts";
+import { type Clock as PressureClock, taskClock } from "./clock.ts";
 
 export interface ExecutionBudget {
 	maxSeconds?: number;

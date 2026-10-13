@@ -17,6 +17,7 @@ import type {
 	PressureFixtureRequest,
 	PressureTrace,
 } from "./fixtures/pressure-provider.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 type Message = AgentSession["messages"][number];
 type ToolResult = Extract<Message, { role: "toolResult" }>;
@@ -260,18 +261,11 @@ class Host {
 	}
 	async cleaned(child: Child, graceful = true) {
 		await eventually(
-			() => {
-				try {
-					process.kill(child.pid, 0);
-					return false;
-				} catch {
-					return !existsSync(dirname(child.snapshot));
-				}
-			},
+			() => processExited(child.pid) && !existsSync(dirname(child.snapshot)),
 			Boolean,
 			`child ${child.pid} and inheritance directory cleaned`,
 		);
-		expect(() => process.kill(child.pid, 0)).toThrow();
+		expect(processExited(child.pid)).toBe(true);
 		expect(existsSync(dirname(child.snapshot))).toBe(false);
 		if (graceful)
 			expect(existsSync(join(this.logs, `${child.pid}.closed`))).toBe(true);

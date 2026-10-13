@@ -13,6 +13,7 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import type { BackgroundTaskDetails } from "../src/background.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 import { statusUI } from "./fixtures/status-ui.ts";
 
@@ -279,7 +280,7 @@ for (const busy of [false, true]) {
 				);
 				expect(textOf(queried)).toContain("explicit-only");
 				expect(queried.usage).toBeUndefined();
-				expect(() => process.kill(child.pid, 0)).toThrow();
+				expect(processExited(child.pid)).toBe(true);
 				expect(statusHost.frame()).toContain("└─ completed");
 				expect(statusHost.frame()).toContain("1 turn · pressure: none");
 				expect(statusHost.frame()).not.toContain("CHILD_RESULT");

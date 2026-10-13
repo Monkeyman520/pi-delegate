@@ -18,6 +18,8 @@ import { resolveCli, runDelegation } from "../src/delegate.ts";
 import { captureInheritance } from "../src/inheritance.ts";
 import { RpcProcess } from "../src/rpc.ts";
 import { AgentStatus } from "../src/status.ts";
+import { processExited } from "./fixtures/process-exit.ts";
+import { statusRecords } from "./fixtures/status-records.ts";
 import { statusUI } from "./fixtures/status-ui.ts";
 
 function required<T>(value: T | undefined): T {
@@ -368,7 +370,7 @@ test("real MCP tools are reconnected and executed in a child-owned server", asyn
 			.map((file) => JSON.parse(readFileSync(join(logs, file), "utf8")));
 		const childServer = servers.find((server) => server.child);
 		expect(childServer).toBeDefined();
-		expect(() => process.kill(childServer.pid, 0)).toThrow();
+		expect(processExited(childServer.pid)).toBe(true);
 		expect(JSON.stringify(result.lastResult)).toContain(
 			`mcp:${childServer.pid}:payload`,
 		);
@@ -687,7 +689,7 @@ for (const failure of [
 				const data = JSON.parse(readFileSync(join(logs, file), "utf8"));
 				if (data.child) {
 					expect(existsSync(dirname(data.snapshot))).toBe(false);
-					expect(() => process.kill(data.pid, 0)).toThrow();
+					expect(processExited(data.pid)).toBe(true);
 				}
 			}
 		});
@@ -699,6 +701,7 @@ test("real concurrent child startup and UI retain snapshots across parent change
 		const host = await statusUI();
 		const status = new AgentStatus();
 		status.bind({ mode: "tui", ui: host.ui });
+		const { accept } = statusRecords(status);
 		const requests = [
 			{ model: exactModel, thinkingLevel: "low" as const },
 			{
@@ -714,7 +717,7 @@ test("real concurrent child startup and UI retain snapshots across parent change
 				cwd: state.cwd,
 				env: { ...env, FIXTURE_HOLD_INIT: "1" },
 				task: `hang configuration ${index}`,
-				status: status.add(`task ${index}`),
+				status: accept(`task ${index}`),
 				signal: required(controllers[index]).signal,
 			}),
 		);

@@ -43,7 +43,11 @@ test("actual RPC children do not spawn while queued; initialization occupies the
 					...options,
 					requestedConfiguration: undefined,
 					cliPath: resolve("tests/fixtures/scheduling-rpc.mjs"),
-					env: { SCHEDULING_DIR: directory, SCHEDULING_TASK: options.task },
+					env: {
+						SCHEDULING_DIR: directory,
+						SCHEDULING_TASK: options.task,
+						SCHEDULING_HOLD_CLEANUP: options.task === "first" ? "1" : undefined,
+					},
 				}),
 		);
 	} finally {
@@ -93,7 +97,13 @@ test("actual RPC children do not spawn while queued; initialization occupies the
 		).toMatchObject({ status: "running" });
 		expect(existsSync(file("second-spawned"))).toBe(false);
 		await writeFile(file("first-finish"), "");
+		await waitFor(() => existsSync(file("first-closing")));
+		await Bun.sleep(20);
+		expect(existsSync(file("second-spawned"))).toBe(false);
+		expect(existsSync(file("first-closed"))).toBe(false);
+		await writeFile(file("first-release-close"), "");
 		await waitFor(() => existsSync(file("second-spawned")));
+		expect(existsSync(file("first-closed"))).toBe(true);
 		expect(
 			(await call("delegate_status", { taskId: id })).details,
 		).toMatchObject({ status: "completed", usage: { input: 8 } });
@@ -101,6 +111,7 @@ test("actual RPC children do not spawn while queued; initialization occupies the
 		await writeFile(file("second-finish"), "");
 		expect((await sync).details).toMatchObject({ status: "completed" });
 	} finally {
+		await writeFile(file("first-release-close"), "");
 		await hooks.get("session_shutdown")?.({});
 		await sync;
 		await rm(directory, { recursive: true, force: true });

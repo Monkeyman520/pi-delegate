@@ -1,7 +1,7 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import type { Clock as PressureClock } from "./clock.ts";
 import type { TaskConfiguration } from "./configuration.ts";
-import type { DelegationStatus } from "./delegate.ts";
-import type { PressureClock } from "./pressure.ts";
+import type { DelegationStatus } from "./delegation.ts";
 import { sumUsage } from "./usage.ts";
 
 export type AcceptedPressure = "none" | "warning" | "urgent";
@@ -13,13 +13,7 @@ export interface StatusObserver {
 	usage?(usage: Usage): void;
 	finish(status: DelegationStatus): void;
 }
-export const taskClock: PressureClock = {
-	now: () => performance.now() / 1000,
-	schedule: (callback, ms) => {
-		const timer = setTimeout(callback, ms);
-		return () => clearTimeout(timer);
-	},
-};
+export { taskClock } from "./clock.ts";
 
 /** Never replay untrusted terminal escapes, bidi controls or cursor commands. */
 export function safeText(text: string, multiline = false): string {
@@ -61,6 +55,9 @@ export class TaskProgress implements StatusObserver {
 		return this.startedAt === undefined
 			? 0
 			: Math.max(0, (this.stoppedAt ?? this.time.now()) - this.startedAt);
+	}
+	get latestTool(): string | undefined {
+		return [...this.tools.values()].at(-1);
 	}
 	phase = (phase: "queued" | "initializing" | "running"): void => {
 		if (!this.valid() || this.status || this.startedAt !== undefined) return;
@@ -142,12 +139,14 @@ export class TaskProgress implements StatusObserver {
 		if (this.pressure !== "urgent") this.pressure = stage;
 		this.changed();
 	};
-	finish = (status: DelegationStatus): void => {
-		if (!this.valid() || this.status) return;
+	/** Returns whether this call published a new terminal observation. */
+	finish = (status: DelegationStatus): boolean => {
+		if (!this.valid() || this.status) return false;
 		this.status = status;
 		this.stoppedAt ??= this.time.now();
 		this.terminalAt = this.time.now();
 		this.tools.clear();
 		this.changed();
+		return true;
 	};
 }

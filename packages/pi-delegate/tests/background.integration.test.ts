@@ -11,6 +11,7 @@ import {
 import type { BackgroundTaskDetails } from "../src/background.ts";
 import { resolveCli } from "../src/delegate.ts";
 import { RpcProcess } from "../src/rpc.ts";
+import { processExited } from "./fixtures/process-exit.ts";
 
 type Message = AgentSession["messages"][number];
 type ToolResult = Extract<Message, { role: "toolResult" }>;
@@ -216,7 +217,7 @@ async function withParent(
 function cleaned(logs: string, child: ChildLog) {
 	expect(existsSync(join(logs, `${child.pid}.closed`))).toBe(true);
 	expect(existsSync(dirname(child.snapshot))).toBe(false);
-	expect(() => process.kill(child.pid, 0)).toThrow();
+	expect(processExited(child.pid)).toBe(true);
 }
 
 test("real Pi RPC: acknowledges gated background work, proceeds independently, and idle completion remains silent with separate usage", async () => {
