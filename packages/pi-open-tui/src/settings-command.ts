@@ -1,14 +1,17 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import {
 	Box,
+	Input,
+	type Focusable,
 	Key,
 	matchesKey,
 	SelectList,
 	type SelectItem,
 	type TUI,
 	Text,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
-import type { CursorStyle, IconMode, OpenTuiConfig, SettingsLanguage, ThinkingPeekLines } from "./config.ts";
+import type { CursorStyle, IconMode, OpenTuiConfig, SettingsLanguage, ThinkingPeekLines, ToolBoxBorderStyle } from "./config.ts";
 
 interface SettingItem {
 	id: string;
@@ -16,15 +19,20 @@ interface SettingItem {
 	currentValue: string;
 }
 
-type Tab = "features" | "icons" | "segments" | "telemetry";
+type Tab = "features" | "icons" | "segments" | "telemetry" | "toolBorder";
 
-const TABS: Tab[] = ["features", "icons", "segments", "telemetry"];
+const TABS: Tab[] = ["features", "icons", "segments", "telemetry", "toolBorder"];
 
 const COPY = {
 	en: {
 		title: "Open TUI Settings",
-		tabs: { features: "General", icons: "Appearance", segments: "Footer", telemetry: "Telemetry" },
+		tabs: { features: "General", icons: "Appearance", segments: "Footer", telemetry: "Telemetry", toolBorder: "Tool borders" },
 		hint: "Tab/Shift+Tab/←/→: tabs · ↑/↓: move · Enter/Space: change · Esc/q: close",
+		editHint: "Enter: save · Esc: cancel · Empty: reset to default",
+		charHint: "One visible column, e.g. ─, │, #",
+		colorHint: "Theme color token, e.g. muted, accent, success",
+		invalidChar: "Use a symbol occupying one visible column.",
+		invalidColor: "Unknown theme color token.",
 		labels: {
 			enabled: "Enabled",
 			inlineFooter: "Inline footer",
@@ -53,6 +61,16 @@ const COPY = {
 			tokenCounts: "Token counts",
 			stallDetails: "Stall details",
 			costRate: "Cost rate",
+			toolBoxBorder: "Tool box borders",
+			borderStyle: "Border style",
+			borderColorMode: "Color mode",
+			borderColor: "Static color (theme token)",
+			top: "Top border",
+			bottom: "Bottom border",
+			left: "Left border",
+			topChar: "Top symbol",
+			bottomChar: "Bottom symbol",
+			leftChar: "Left symbol",
 		},
 		values: {
 			on: "On",
@@ -63,12 +81,20 @@ const COPY = {
 			editorBorderStyles: { surround: "Surround", minimal: "Minimal" },
 			messageLayouts: { normal: "Normal", compact: "Compact" },
 			icons: { auto: "Auto", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
+			borderStyles: { single: "Single", bold: "Bold", double: "Double", dashed: "Dashed", custom: "Custom" },
+			borderColorModes: { status: "Status", static: "Static" },
+			default: "Default",
 		},
 	},
 	zh: {
 		title: "Open TUI 设置",
-		tabs: { features: "常规", icons: "外观", segments: "Footer", telemetry: "遥测" },
+		tabs: { features: "常规", icons: "外观", segments: "Footer", telemetry: "遥测", toolBorder: "工具边框" },
 		hint: "Tab/Shift+Tab/←/→：切页 · ↑/↓：移动 · Enter/Space：更改 · Esc/q：关闭",
+		editHint: "Enter：保存 · Esc：取消 · 留空：恢复默认",
+		charHint: "单列宽度符号，例如 ─、│、#",
+		colorHint: "主题颜色标记，例如 muted、accent、success",
+		invalidChar: "请输入占一个显示列的符号。",
+		invalidColor: "未知的主题颜色标记。",
 		labels: {
 			enabled: "启用",
 			inlineFooter: "内联底栏",
@@ -97,6 +123,16 @@ const COPY = {
 			tokenCounts: "Token 数量",
 			stallDetails: "停顿详情",
 			costRate: "费用速率",
+			toolBoxBorder: "工具卡片边框",
+			borderStyle: "边框样式",
+			borderColorMode: "配色模式",
+			borderColor: "固定颜色（主题标记）",
+			top: "上边框",
+			bottom: "下边框",
+			left: "左边框",
+			topChar: "上边框符号",
+			bottomChar: "下边框符号",
+			leftChar: "左边框符号",
 		},
 		values: {
 			on: "开启",
@@ -107,6 +143,9 @@ const COPY = {
 			editorBorderStyles: { surround: "环绕", minimal: "简洁" },
 			messageLayouts: { normal: "常规", compact: "紧凑" },
 			icons: { auto: "自动", nerd: "Nerd", unicode: "Unicode", ascii: "ASCII" },
+			borderStyles: { single: "单线", bold: "粗线", double: "双线", dashed: "虚线", custom: "自定义" },
+			borderColorModes: { status: "状态配色", static: "固定配色" },
+			default: "默认",
 		},
 	},
 } as const;
@@ -221,6 +260,31 @@ function buildTelemetryItems(config: OpenTuiConfig, copy: SettingsCopy): Setting
 	];
 }
 
+const BORDER_TEXT_EDGES = { topChar: "top", bottomChar: "bottom", leftChar: "left" } as const;
+type BorderTextField = "color" | keyof typeof BORDER_TEXT_EDGES;
+
+function isBorderTextField(id: string): id is BorderTextField {
+	return id === "color" || Object.hasOwn(BORDER_TEXT_EDGES, id);
+}
+
+function buildToolBorderItems(config: OpenTuiConfig, copy: SettingsCopy): SettingItem[] {
+	const border = config.toolBoxBorder;
+	const flag = (value: boolean) => value ? copy.values.on : copy.values.off;
+	const symbol = (value?: string) => value === undefined ? copy.values.default : JSON.stringify(value);
+	return [
+		{ id: "enabled", label: copy.labels.toolBoxBorder, currentValue: flag(border.enabled) },
+		{ id: "style", label: copy.labels.borderStyle, currentValue: copy.values.borderStyles[border.style] },
+		{ id: "colorMode", label: copy.labels.borderColorMode, currentValue: copy.values.borderColorModes[border.colorMode] },
+		{ id: "color", label: copy.labels.borderColor, currentValue: border.color || copy.values.default },
+		{ id: "top", label: copy.labels.top, currentValue: flag(border.top.enabled) },
+		{ id: "topChar", label: copy.labels.topChar, currentValue: symbol(border.top.char) },
+		{ id: "bottom", label: copy.labels.bottom, currentValue: flag(border.bottom.enabled) },
+		{ id: "bottomChar", label: copy.labels.bottomChar, currentValue: symbol(border.bottom.char) },
+		{ id: "left", label: copy.labels.left, currentValue: flag(border.left.enabled) },
+		{ id: "leftChar", label: copy.labels.leftChar, currentValue: symbol(border.left.char) },
+	];
+}
+
 function buildItems(tab: Tab, config: OpenTuiConfig): SettingItem[] {
 	const copy = COPY[config.settingsLanguage];
 	switch (tab) {
@@ -228,6 +292,7 @@ function buildItems(tab: Tab, config: OpenTuiConfig): SettingItem[] {
 		case "icons": return buildIconsItems(config, copy);
 		case "segments": return buildSegmentsItems(config, copy);
 		case "telemetry": return buildTelemetryItems(config, copy);
+		case "toolBorder": return buildToolBorderItems(config, copy);
 	}
 }
 
@@ -251,6 +316,21 @@ function handleSettingChange(
 		if (itemId === "worklineAttachToBorder") return { ...config, workline: { ...config.workline, attachToBorder: !config.workline.attachToBorder } };
 		if (itemId === "messageLayout") return { ...config, messageLayout: config.messageLayout === "normal" ? "compact" : "normal" };
 	}
+	if (tab === "toolBorder") {
+		const border = config.toolBoxBorder;
+		if (itemId === "enabled") return { ...config, toolBoxBorder: { ...border, enabled: !border.enabled } };
+		if (itemId === "style") {
+			const order: ToolBoxBorderStyle[] = ["single", "bold", "double", "dashed", "custom"];
+			const style = order[(order.indexOf(border.style) + 1) % order.length]!;
+			return { ...config, toolBoxBorder: { ...border, style } };
+		}
+		if (itemId === "colorMode") {
+			return { ...config, toolBoxBorder: { ...border, colorMode: border.colorMode === "status" ? "static" : "status" } };
+		}
+		if (itemId === "top" || itemId === "bottom" || itemId === "left") {
+			return { ...config, toolBoxBorder: { ...border, [itemId]: { ...border[itemId], enabled: !border[itemId].enabled } } };
+		}
+	}
 	if (tab === "segments") {
 		return toggleSetting(config, itemId as keyof OpenTuiConfig["footerSegments"]);
 	}
@@ -260,7 +340,7 @@ function handleSettingChange(
 	return config;
 }
 
-interface SettingsUiHandle {
+interface SettingsUiHandle extends Focusable {
 	render: (width: number) => string[];
 	invalidate: () => void;
 	handleInput: (data: string) => void;
@@ -278,6 +358,15 @@ class SettingsUi implements SettingsUiHandle {
 	private cachedWidth: number | undefined;
 	private cachedLines: string[] | undefined;
 	private compact = false;
+	private editing: { field: BorderTextField; input: Input; error?: string } | undefined;
+	private hasFocus = false;
+
+	get focused(): boolean { return this.hasFocus; }
+	set focused(value: boolean) {
+		this.hasFocus = value;
+		if (this.editing) this.editing.input.focused = value;
+		this.invalidate();
+	}
 
 	constructor(
 		theme: Theme,
@@ -295,9 +384,56 @@ class SettingsUi implements SettingsUiHandle {
 
 	private applySetting(itemId: string): void {
 		this.selectedItemByTab[this.tab] = itemId;
+		if (this.tab === "toolBorder" && isBorderTextField(itemId)) {
+			const border = this.config.toolBoxBorder;
+			const input = new Input();
+			input.setValue(itemId === "color" ? border.color ?? "" : border[BORDER_TEXT_EDGES[itemId]].char ?? "");
+			input.focused = this.focused;
+			this.editing = { field: itemId, input };
+			input.onSubmit = (value) => this.saveBorderText(itemId, value);
+			input.onEscape = () => {
+				this.editing = undefined;
+				this.rebuild(itemId);
+			};
+			this.rebuild(itemId);
+			return;
+		}
 		this.config = handleSettingChange(this.tab, itemId, this.config);
 		this.onChange(this.config);
 		this.rebuild(itemId);
+	}
+
+	private saveBorderText(field: BorderTextField, value: string): void {
+		const copy = COPY[this.config.settingsLanguage];
+		value = value.trim();
+		let error: string | undefined;
+		if (value) {
+			if (field === "color") {
+				try { this.theme.fg(value as ThemeColor, ""); }
+				catch { error = copy.invalidColor; }
+			} else if (/[\x00-\x1f\x7f-\x9f]/u.test(value) || visibleWidth(value) !== 1) {
+				error = copy.invalidChar;
+			}
+		}
+		if (error && this.editing) {
+			this.editing.error = error;
+			this.rebuild(field);
+			return;
+		}
+		const border = { ...this.config.toolBoxBorder };
+		if (field === "color") {
+			if (value) border.color = value;
+			else delete border.color;
+		} else {
+			const edge = BORDER_TEXT_EDGES[field];
+			border[edge] = { ...border[edge] };
+			if (value) border[edge].char = value;
+			else delete border[edge].char;
+		}
+		this.config = { ...this.config, toolBoxBorder: border };
+		this.editing = undefined;
+		this.onChange(this.config);
+		this.rebuild(field);
 	}
 
 	private switchTab(offset: number): void {
@@ -317,8 +453,19 @@ class SettingsUi implements SettingsUiHandle {
 			return active ? this.theme.fg("accent", label) : this.theme.fg("dim", label);
 		}).join(" ");
 		this.container.addChild(new Text(tabBar, 1, 0));
-		this.container.addChild(new Text(this.theme.fg("dim", copy.hint), 1, 0));
+		this.container.addChild(new Text(this.theme.fg("dim", this.editing ? copy.editHint : copy.hint), 1, 0));
 
+		if (this.editing) {
+			const { field, input, error } = this.editing;
+			const label = field === "color" ? copy.labels.borderColor : copy.labels[field];
+			this.container.addChild(new Text(label, 1, 0));
+			this.container.addChild(new Text(this.theme.fg("muted", field === "color" ? copy.colorHint : copy.charHint), 1, 0));
+			this.container.addChild(input);
+			if (error) this.container.addChild(new Text(this.theme.fg("error", error), 1, 0));
+			this.cachedWidth = undefined;
+			this.cachedLines = undefined;
+			return;
+		}
 		const items = buildItems(this.tab, this.config).map((item) => ({
 			value: item.id,
 			label: this.compact ? `${item.label}: ${item.currentValue}` : item.label,
@@ -352,6 +499,11 @@ class SettingsUi implements SettingsUiHandle {
 	}
 
 	handleInput(data: string): void {
+		if (this.editing) {
+			this.editing.input.handleInput(data);
+			this.invalidate();
+			return;
+		}
 		if (matchesKey(data, Key.tab) || matchesKey(data, Key.right)) {
 			this.switchTab(1);
 			this.invalidate();
@@ -414,6 +566,8 @@ export function registerSettingsCommand(
 				() => done(undefined),
 			);
 			return {
+				get focused() { return ui.focused; },
+				set focused(value: boolean) { ui.focused = value; },
 				render: (w: number) => ui.render(w),
 				invalidate: () => ui.invalidate(),
 				handleInput: (data: string) => {

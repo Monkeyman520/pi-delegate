@@ -74,7 +74,7 @@ pi install /absolute/path/to/checkout/packages/pi-open-tui
 
 ## 配置
 
-运行 `/open-tui` 打开设置窗口，其中包含**常规**、**外观**、**底栏**和**遥测**四个页面。设置保存在 `~/.pi/agent/open-tui.json`：
+运行 `/open-tui` 打开设置窗口，其中包含**常规**、**外观**、**底栏**、**遥测**和**工具边框**五个页面。设置保存在 `~/.pi/agent/open-tui.json`：
 
 ```json
 {
@@ -140,6 +140,9 @@ pi install /absolute/path/to/checkout/packages/pi-open-tui
 | `footerSegments.capitalizeProviderName` | 布尔开关 | 将底栏中提供商名称的首字母大写；设为 `false` 时保留原始大小写 |
 | `telemetry` | 布尔开关 | 控制遥测总开关和各项指标 |
 | `thinkingPeek.lines` | `0`、`1`、`2` | 关闭、单行或双行思考预览 |
+| `toolBoxBorder` | 总开关、样式、配色模式、颜色、各边开关/符号 | 工具边框页面；默认关闭。样式：`single`、`bold`、`double`、`dashed`、`custom`。配色模式：`status` 或 `static`；固定颜色使用 `muted`、`accent` 等主题标记 |
+
+在**工具边框**页面，Enter/Space 切换开关、样式或配色模式。选择符号或固定颜色后进入输入框：Enter 保存，Esc 取消，留空恢复默认。自定义符号需占一个终端显示列。右侧保持开放，不绘制右边框。
 
 `sessionName` 仅在会话有名称时显示；`hostname` 会显示主机名的短名称（主机名的第一个标签，例如从 `mba.example.com` 显示为 `mba`），并使用服务器图标；`gitCommit` 独立控制 detached HEAD 状态下的短哈希和标签，`gitBranch` 则控制分支名或 `HEAD` 标签；关闭 `extensionStatuses` 会隐藏整行扩展状态，其中也包括 MCP 状态。每条状态会保留其扩展通过 `ctx.ui.theme.fg()` 设置的颜色；未设置颜色的状态使用 muted 主题色显示。
 

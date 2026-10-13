@@ -72,7 +72,7 @@ If the font is installed but `auto` still selects ASCII, choose `nerd` explicitl
 
 ## Configuration
 
-Run `/open-tui` to open the settings dialog. It provides **General**, **Appearance**, **Footer**, and **Telemetry** tabs. Settings are stored in `~/.pi/agent/open-tui.json`:
+Run `/open-tui` to open the settings dialog. It provides **General**, **Appearance**, **Footer**, **Telemetry**, and **Tool borders** tabs. Settings are stored in `~/.pi/agent/open-tui.json`:
 
 ```json
 {
@@ -138,6 +138,9 @@ Key options:
 | `footerSegments.capitalizeProviderName` | Boolean | Capitalizes the first character of the provider name in the footer; set it to `false` to keep the provider's original casing |
 | `telemetry` | Boolean flags | Enables telemetry and its individual measurements |
 | `thinkingPeek.lines` | `0`, `1`, `2` | Off, one-line, or two-line hidden thinking preview |
+| `toolBoxBorder` | Enabled, style, color mode, color, per-edge enabled/char | Tool borders tab; disabled by default. Styles: `single`, `bold`, `double`, `dashed`, `custom`. Color mode: `status` or `static`; static color uses a theme token such as `muted` or `accent` |
+
+In **Tool borders**, Enter/Space toggles flags or cycles styles and color modes. Selecting a symbol or static color opens an input: Enter saves, Esc cancels, and an empty value restores the default. Symbol overrides must occupy one visible terminal column. Borders remain open on the right.
 
 `sessionName` appears only when the session has a name. `hostname` shows the short host name (first label of the machine's host name, e.g. `mba` from `mba.example.com`) with a server icon. `gitCommit` independently controls the short hash and tag in detached HEAD state; `gitBranch` controls the branch name or `HEAD` label. Disabling `extensionStatuses` hides the entire extension status line, including MCP status. Each status keeps the colours its extension applied with `ctx.ui.theme.fg()`. A status without colours renders in the muted theme colour.
 

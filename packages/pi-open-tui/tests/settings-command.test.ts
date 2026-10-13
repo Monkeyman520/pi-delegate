@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type Component, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component, type Focusable, type KeybindingsManager, type TUI } from "@earendil-works/pi-tui";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, type OpenTuiConfig } from "../src/config.ts";
 import { installEditor, OpenTuiEditor } from "../src/editor.ts";
 import { getPendingUiChange } from "../src/index.ts";
 import { registerSettingsCommand } from "../src/settings-command.ts";
 
-interface SettingsComponent extends Component {
+interface SettingsComponent extends Component, Focusable {
 	handleInput(data: string): void;
 }
 
@@ -23,6 +23,7 @@ const theme = {
 async function openSettings(
 	initialConfig = structuredClone(DEFAULT_CONFIG),
 	onChange?: (config: OpenTuiConfig) => void,
+	settingsTheme: Theme = theme,
 ): Promise<{
 	component: SettingsComponent;
 	getConfig: () => OpenTuiConfig;
@@ -66,7 +67,7 @@ async function openSettings(
 					done: (value: void) => void,
 				) => Component,
 			) => new Promise<void>((resolve) => {
-				component = factory(tui, theme, {} as KeybindingsManager, (_value: void) => {
+				component = factory(tui, settingsTheme, {} as KeybindingsManager, (_value: void) => {
 					closed = true;
 					resolve();
 				}) as SettingsComponent;
@@ -331,10 +332,8 @@ test("remembers the selection for each tab", async () => {
 	settings.component.handleInput("\x1b[B");
 	settings.component.handleInput("\x1b[B");
 	settings.component.handleInput("\x1b[B");
-	settings.component.handleInput("\t");
-	settings.component.handleInput("\t");
-	settings.component.handleInput("\t");
-	settings.component.handleInput("\t");
+	// Wrap through all five tabs, preserving the Footer selection.
+	for (let i = 0; i < 5; i++) settings.component.handleInput("\t");
 
 	assert.match(selectedLine(settings.component), /Git branch/);
 });
@@ -520,6 +519,171 @@ test("compact tool presentation is independently toggleable and localized", asyn
 		assert.equal(settings.getConfig().toolPresentation, false);
 		assert.equal(settings.getConfig().enabled, true);
 		assert.deepEqual(settings.getConfig().footerSegments, config.footerSegments);
+		settings.component.handleInput("q");
+		await settings.waitForClose();
+	}
+});
+
+function selectSetting(component: SettingsComponent, label: RegExp): void {
+	for (let i = 0; i < 12 && !label.test(selectedLine(component)); i++) component.handleInput("\x1b[B");
+	assert.match(selectedLine(component), label);
+}
+
+function clearTextInput(component: SettingsComponent): void {
+	component.handleInput("\x05"); // Move to the end before clearing the prefilled value.
+	component.handleInput("\x15");
+}
+
+test("exposes all tool border settings in a localized tab and previews independent changes", async () => {
+	for (const language of ["en", "zh"] as const) {
+		const config = structuredClone(DEFAULT_CONFIG);
+		config.settingsLanguage = language;
+		const original = structuredClone(config);
+		const observed: OpenTuiConfig[] = [];
+		const settings = await openSettings(config, (next) => observed.push(next));
+		for (let i = 0; i < 4; i++) settings.component.handleInput("\t");
+		assert.match(settings.component.render(80).join("\n"), language === "zh" ? /\[工具边框\]/ : /\[Tool borders\]/);
+		assert.match(selectedLine(settings.component), language === "zh" ? /工具卡片边框.*关闭/ : /Tool box borders.*Off/);
+		settings.component.handleInput(" ");
+		assert.equal(settings.getConfig().toolBoxBorder.enabled, true);
+		settings.component.handleInput("\x1b[B");
+		const styleNames = language === "zh" ? ["粗线", "双线", "虚线", "自定义", "单线"] : ["Bold", "Double", "Dashed", "Custom", "Single"];
+		for (const [i, style] of (["bold", "double", "dashed", "custom", "single"] as const).entries()) {
+			settings.component.handleInput("\r");
+			assert.equal(settings.getConfig().toolBoxBorder.style, style);
+			assert.ok(selectedLine(settings.component).includes(styleNames[i]!));
+		}
+		settings.component.handleInput("\x1b[B");
+		settings.component.handleInput(" ");
+		assert.equal(settings.getConfig().toolBoxBorder.colorMode, "static");
+		assert.match(selectedLine(settings.component), language === "zh" ? /固定配色/ : /Static/);
+		settings.component.handleInput("\r");
+		assert.equal(settings.getConfig().toolBoxBorder.colorMode, "status");
+		for (const [edge, label] of [
+			["top", language === "zh" ? /上边框.*开启/ : /Top border.*On/],
+			["bottom", language === "zh" ? /下边框.*开启/ : /Bottom border.*On/],
+			["left", language === "zh" ? /左边框.*开启/ : /Left border.*On/],
+		] as const) {
+			selectSetting(settings.component, label);
+			settings.component.handleInput(" ");
+			assert.equal(settings.getConfig().toolBoxBorder[edge].enabled, false);
+		}
+		assert.equal(observed.length, 11);
+		assert.deepEqual(config, original, "UI changes must not mutate the previous configuration");
+		assert.deepEqual({ ...settings.getConfig(), toolBoxBorder: original.toolBoxBorder }, original);
+		for (const width of [24, 36, 48, 80]) {
+			for (const line of settings.component.render(width)) assert.ok(visibleWidth(line) <= width);
+		}
+		settings.component.handleInput("\t");
+		assert.match(selectedLine(settings.component), language === "zh" ? /启用/ : /Enabled/);
+		settings.component.handleInput("q");
+		await settings.waitForClose();
+	}
+});
+
+test("edits and resets border symbols and static color without losing nested fields on save/reload", async () => {
+	const agentDir = mkdtempSync(join(tmpdir(), "pi-open-tui-border-settings-"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	let settings: Awaited<ReturnType<typeof openSettings>> | undefined;
+	try {
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		const border = Object.assign(structuredClone(DEFAULT_CONFIG.toolBoxBorder), {
+			color: "muted", legacyStyle: { keep: true },
+			top: { enabled: true, char: "-", legacyField: "keep" },
+		});
+		writeFileSync(join(agentDir, "open-tui.json"), JSON.stringify({ toolBoxBorder: border }));
+		const config = loadConfig();
+		const original = structuredClone(config);
+		settings = await openSettings(config, saveConfig);
+		settings.component.focused = true;
+		settings.component.handleInput("\x1b[Z");
+		for (const [label, value, edge] of [
+			[/Top symbol/, "#", "top"],
+			[/Bottom symbol/, "=", "bottom"],
+			[/Left symbol/, "q", "left"],
+		] as const) {
+			selectSetting(settings.component, label);
+			settings.component.handleInput(" ");
+			clearTextInput(settings.component);
+			settings.component.handleInput(value);
+			assert.deepEqual(loadConfig().toolBoxBorder, settings.getConfig().toolBoxBorder, "Typing is not a save");
+			assert.equal(settings.isClosed(), false, "q is text inside an input");
+			assert.ok(settings.component.render(80).some((line) => line.includes("\x1b_pi:c")));
+			settings.component.focused = false;
+			assert.ok(settings.component.render(80).every((line) => !line.includes("\x1b_pi:c")));
+			settings.component.focused = true;
+			for (const width of [24, 36, 48]) {
+				for (const line of settings.component.render(width)) assert.ok(visibleWidth(line) <= width);
+			}
+			settings.component.handleInput("\r");
+			assert.equal(settings.getConfig().toolBoxBorder[edge].char, value);
+			assert.match(selectedLine(settings.component), label);
+			assert.deepEqual(loadConfig().toolBoxBorder, settings.getConfig().toolBoxBorder);
+			settings.component.handleInput("\r");
+			clearTextInput(settings.component);
+			settings.component.handleInput("\r");
+			assert.equal(Object.hasOwn(settings.getConfig().toolBoxBorder[edge], "char"), false);
+			assert.match(selectedLine(settings.component), /Default/);
+			assert.deepEqual(loadConfig().toolBoxBorder, settings.getConfig().toolBoxBorder);
+		}
+		selectSetting(settings.component, /Static color/);
+		settings.component.handleInput("\r");
+		clearTextInput(settings.component);
+		settings.component.handleInput("accent");
+		settings.component.handleInput("\x1b[D");
+		settings.component.handleInput("\x1b[C");
+		settings.component.handleInput("\r");
+		assert.equal(settings.getConfig().toolBoxBorder.color, "accent");
+		assert.deepEqual(loadConfig().toolBoxBorder, settings.getConfig().toolBoxBorder);
+		settings.component.handleInput("\r");
+		clearTextInput(settings.component);
+		settings.component.handleInput("\r");
+		assert.equal(Object.hasOwn(loadConfig().toolBoxBorder, "color"), false);
+		assert.deepEqual((loadConfig().toolBoxBorder as typeof border).legacyStyle, { keep: true });
+		assert.equal((loadConfig().toolBoxBorder.top as typeof border.top).legacyField, "keep");
+		assert.deepEqual(config, original);
+	} finally {
+		settings?.component.handleInput("\x1b");
+		if (settings && !settings.isClosed()) settings.component.handleInput("\x1b");
+		await settings?.waitForClose();
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("cancels text edits and rejects unsafe symbols and unknown theme colors", async () => {
+	for (const language of ["en", "zh"] as const) {
+		const config = structuredClone(DEFAULT_CONFIG);
+		config.settingsLanguage = language;
+		config.toolBoxBorder.top.char = "#";
+		const observed: OpenTuiConfig[] = [];
+		const settings = await openSettings(config, (next) => observed.push(next), {
+			...theme,
+			fg: (color: string, text: string) => {
+				if (color === "notAColor") throw new Error("Unknown theme color");
+				return text;
+			},
+		} as Theme);
+		settings.component.handleInput("\x1b[Z");
+		selectSetting(settings.component, language === "zh" ? /上边框符号/ : /Top symbol/);
+		settings.component.handleInput("\r");
+		clearTextInput(settings.component);
+		settings.component.handleInput("界");
+		settings.component.handleInput("\r");
+		assert.match(settings.component.render(80).join("\n"), language === "zh" ? /占一个显示列/ : /one visible column/);
+		assert.equal(settings.getConfig().toolBoxBorder.top.char, "#");
+		assert.equal(observed.length, 0);
+		settings.component.handleInput("\x1b");
+		assert.match(selectedLine(settings.component), language === "zh" ? /上边框符号/ : /Top symbol/);
+		assert.equal(settings.isClosed(), false);
+		selectSetting(settings.component, language === "zh" ? /固定颜色/ : /Static color/);
+		settings.component.handleInput("\r");
+		settings.component.handleInput("notAColor");
+		settings.component.handleInput("\r");
+		assert.match(settings.component.render(80).join("\n"), language === "zh" ? /未知的主题颜色/ : /Unknown theme color/);
+		assert.equal(observed.length, 0);
+		settings.component.handleInput("\x1b");
 		settings.component.handleInput("q");
 		await settings.waitForClose();
 	}
