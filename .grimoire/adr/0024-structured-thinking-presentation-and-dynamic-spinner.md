@@ -2,6 +2,9 @@
 
 **Status:** Completed
 **Date:** 2026-10-14
+**Partially superseded by:** [ADR 0025](./0025-shared-open-tui-ui-refresh-ownership.md) (2026-10-16), for the independently owned 80ms thinking ticker. The stream-independent animation requirement and native label integration boundary remain in force.
+**Provenance:** Preserved from [PR #2 at 413a7b0](https://github.com/wangjq4214/pi-delegate/blob/413a7b065dc26fd63cdfc363fd7fecfa2ca1fe30/.grimoire/adr/0024-structured-thinking-presentation-and-dynamic-spinner.md). Its original Completed status and implementation descriptions concern that PR branch, not proof that its implementation exists on the current local branch. Supersession metadata and this provenance/revision note were added during refinement.
+**Presentation revision:** The accepted 2026-10-16 title-tree refinement in [Spec 0014](../spec/0014-structured-thinking-block-presentation.md) replaces the historical preview-row, guide-word title detection, configuration and completion-presentation requirements below. These historical examples are not the current acceptance contract. No title-tree implementation or QA is claimed by this note.
 
 ## Context
 

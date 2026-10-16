@@ -1,178 +1,195 @@
-# Structured thinking milestones, timing telemetry, dynamic spinner, and sanitized peek presentation
+# Bounded thinking title trees and shared Open TUI refresh
 
 **Spec ID:** 0014
-**Status:** H4 implemented — automated package verification passed; live-terminal visual QA not performed
-**Date:** 2026-10-14
-**Presentation revision:** 2026-10-16
-**Sources:** [ADR 0024](../adr/0024-structured-thinking-presentation-and-dynamic-spinner.md); Accepted refinement choices H1–H4 below; [Spec 0011](./0011-open-tui-tool-call-presentation.md).
+**Status:** Refined
+**Date:** 2026-10-16
+**Execution:** Baseline and H8 follow-up implementation/automated verification are recorded below. Standalone bold titles and matched actual spinner speed are implemented; live-terminal/font/IME visual acceptance remains pending.
+**Sources:** The accepted PR #2 review/refinement conversation summarized below; [original PR Spec 0014 at 413a7b0](https://github.com/wangjq4214/pi-delegate/blob/413a7b065dc26fd63cdfc363fd7fecfa2ca1fe30/.grimoire/spec/0014-structured-thinking-block-presentation.md); [ADR 0024](../adr/0024-structured-thinking-presentation-and-dynamic-spinner.md); [ADR 0025](../adr/0025-shared-open-tui-ui-refresh-ownership.md); [Spec 0011](./0011-open-tui-tool-call-presentation.md).
 
-## Source and coordination boundary
+## Source, revision and coordination boundary
 
-- **H1 — Established peek baseline:** `packages/pi-open-tui/src/peek.ts` implements a three-phase state machine (`idle` -> `thinking` -> `done`). `peekTail` extracts the trailing 1 or 2 logical lines of thinking text with whitespace normalization (`\s+`). `packages/pi-open-tui/src/peek-controller.ts` updates Pi's native `HiddenThinkingComponent` via `ThinkingLabelTarget.setHiddenThinkingLabel`. On message completion (`settled`), a 300ms timer previously cleared the label.
-- **H2 — Accepted refinement choices:**
-  1. **Phase/Milestone extraction**: Rule-based/regex heuristic detection of headings, steps, and planning guide words. The original layout is refined by H4: a separate status row precedes the configured number of sanitized preview body rows, with an optional milestone before elapsed duration.
-  2. **Streaming timing and dynamic spinner**: Decouple spinner animation and timing updates from stream chunks. Run an autonomous ticker (default 80ms) that advances the spinner glyph and updates elapsed duration continuously from first thinking delta, freezing on completion. Exclude unverified token count estimation during streaming.
-  3. **Visual boundary & finished state**: Retain the finished thinking summary label on the collapsed block (e.g. `  (分析代码 · 14.2s)`) instead of clearing after 300ms. Keep all presentation changes strictly within the existing `HiddenThinkingComponent` label API; do not modify Assistant message components or transcript rails.
-  4. **Markdown sanitization**: Provide a preview sanitizer to strip `#` headers, code fences, inline backticks, blockquotes, and bullet markers.
-  5. **Configuration compatibility**: Retain `thinkingPeek.lines: 0 | 1 | 2` as the primary switch without breaking schema changes.
-- **H3 — Coordination boundary:** Follow [ADR 0024](../adr/0024-structured-thinking-presentation-and-dynamic-spinner.md). Maintain strict host containment to the label target; do not modify saved configuration schemas or public tool boundaries.
-- **H4 — Confirmed presentation refinement:** The user requested lamp-only thinking identification without UI-added `think` / `thinking` words, title-before-duration ordering when a title exists, and preview text starting on the next row even without a title. They clarified scope as “启用 peek 的折叠块” and confirmed both the interpretation “1 行状态＋2 行预览正文，共 3 行” for `lines: 2` and the spec-only route with “是的 都确认”. `lines: 1` likewise denotes one preview body row following the separate status row; this changes layout, not the stored configuration value or default.
-  - **Permissions and endpoint (completed refinement stage):** Revise only this existing spec. No ticket decomposition, implementation plan, production/test edits or QA execution. Preserve unrelated and pre-existing workspace changes.
-  - **Artifact knowledge boundary:** Consume settled requirements and established solution choices only. Trace material assertions to this handoff or inspected sources; do not invent or revise domain facts, architecture, constraints, acceptance semantics or unconfirmed assumptions. A needed new fact or decision returns to refinement before continuing. Return at the spec-only endpoint.
-  - **Knowledge result:** No CONTEXT/ADR update is needed: these are ordinary display requirements, not a new domain concept or architectural decision. H4 refines the historical layout examples in this spec and ADR 0024; that ADR remains unchanged because its integration boundary, timer ownership and persistence decision are preserved.
-- **Inspected surfaces for H4:** [peek.ts](../../packages/pi-open-tui/src/peek.ts), [peek-controller.ts](../../packages/pi-open-tui/src/peek-controller.ts), [thinking-label.ts](../../packages/pi-open-tui/src/thinking-label.ts), [icons.ts](../../packages/pi-open-tui/src/icons.ts) and [config.ts](../../packages/pi-open-tui/src/config.ts). At refinement time, the formatter added `think`, placed duration before milestone in completed summaries and placed untitled preview text beside the running marker; these are the behaviors to change, not proof of H4 completion.
+- **H1 — Baseline:** Local `main` at `bf909bf` has message-scoped trailing-thinking previews through `peek.ts`, `peek-controller.ts` and `ThinkingLabelTarget`. PR #2 at `413a7b065dc26fd63cdfc363fd7fecfa2ca1fe30` adds detected milestones, elapsed duration, a private 80ms ticker, dedicated status/body rows and retained completion summaries. Local Workline and enhanced-tool presentation own 250ms and 500ms intervals respectively. These are inspected source facts, not evidence that this revision has been implemented.
+- **H2 — Review corrections accepted:** The user requested that all identified issues be fixed: long titles must not displace elapsed time; presentation must remain bounded/compact; refresh scheduling and duration-formatting capabilities must be unified rather than proliferating private implementations; existing lifecycle/fallback regression assertions weakened by the PR must be restored. The review reproduced loss of elapsed time with a 40-Chinese-character title and a 77-column label budget, representative of an 80-column viewport with the existing padding/scrollbar reserve.
+- **H3 — Title-only tree accepted:** The user accepted replacing raw thought-tail previews and one/two-line selection with a title tree and an On/Off setting. Show only explicitly identifiable headings/step titles, not inferred guide-word sentences or model-generated summaries. Retain at most the latest four titles in source order under one status root, up to five rows total; no extra older-content row. Consecutive duplicate titles do not add nodes. Thinking completion collapses the tree to one latest-title/frozen-duration summary. No title means status/duration only. Full reasoning remains available through native expansion.
+- **H4 — Scope and outcomes accepted:** On “还有两个行为边界”, the user accepted the recommended current-assistant-message scope, reset at the next assistant message, and distinct normal/interrupted/failed/neutral-ended presentation based only on reliable evidence for that message/thinking segment. These labels do not assert successful task acceptance. User messages and session boundaries also clear prior presentation according to the existing reset lifecycle.
+- **H5 — Shared refresh accepted:** The user requested unified refresh for performance and accepted one shared session-scoped scheduling owner for extension-owned Workline, enhanced-tool elapsed presentation and thinking title tree. Participation is demand-based, consumers may have different cadences, same-round render requests are coalesced, idle periodic work stops, and event-driven state changes remain timely. Measurements retain independent boundaries. Git/runtime reads and native/third-party timers are excluded. No exact new refresh interval or numeric CPU/latency target was agreed.
+- **H6 — Selected endpoint:** The user selected Spec revision, then confirmed the shared-refresh scope with “可以！”. Only requirements documentation and necessary knowledge records are authorized in this refinement. No implementation, test edits, QA execution, ticket decomposition, implementation plan, dependency changes, branch switching, commits or PR changes. One cohesive contract is sufficient; no slice stage is selected.
+- **H7 — Execution authorization:** After refinement, the user explicitly invoked `grimoire-loop` and requested “检出这个分支，然后开始实现吧”. This supersedes H6's completed spec-only endpoint for subsequent work: checkout, production/test/documentation edits, automated verification, review/check and related fixes are authorized. No commit or push was requested. Use implement → focused tests → review/check → affected fixes/final verification → report, without a separate plan artifact.
+- **H8 — Screenshot follow-up accepted:** The user supplied `pi-clipboard-998af569-1bd8-495e-b875-fe54c91ddfe9.png`, showing standalone bold titles such as “Analyzing voting dynamics” and “Exploring voting thresholds”, and accepted support for whole-line bold titles (representative source fixture: `**标题**`) without requiring a `Step` prefix or numbering. Ordinary prose and partial inline bold must not become titles; the four-title bound and native expansion remain unchanged. The screenshot establishes the rendered appearance, not a byte-for-byte Markdown transcription. The user also requested that Think and Workline's spinners visibly run at the same speed; matching refresh subscription constants alone is insufficient. Workline's normal working spinner is the speed reference; elapsed measurements remain independent.
+- **H9 — Follow-up endpoint:** After the assistant proposed adding these two requirements to this existing Spec only, the user confirmed “可以！”. This follow-up authorizes this requirements-document revision, not another implementation/QA run. H7 remains historical authorization/evidence for the baseline work; no tickets, plan, code/test edits, test execution, branch changes, staging, commit or push are part of H8–H9.
+- **H10 — Follow-up execution authorized:** The user then explicitly invoked `grimoire-loop`. The selected bounded route is implement → targeted/integrated verification with inline review/check → report, without a separate plan/ticket artifact. Production/test/documentation edits and related fixes are authorized for H8 while preserving existing uncommitted work. No commit, push or host installation modification is requested. Required live-terminal visual evidence remains human-owned.
+- **H11 — Preserve completed message summaries:** After reporting that the final display sometimes reverted to `Thinking...`, the user authorized the proposed correction with “改一下！”. New user/assistant messages reset only their message-local title/timer/target state; prior completed summaries remain on their own native components, including when a later final answer has no thinking. Disablement and explicit session/UI teardown still restore native behavior. This revises H4/R3.6's earlier next-message presentation clearing, not the message-local measurement/title window or native-host boundary.
+- **Artifact knowledge boundary:** Consume the settled requirements and established solution choices above. Organize and express them without inventing domain facts, architecture, constraints, acceptance semantics or unconfirmed assumptions. Trace material claims to these sources. A required new decision returns to clarification and any qualifying knowledge recording before artifact work resumes. Return at the Spec-only endpoint.
 
-The pre-refinement version was marked Completed. Refinement established H4 without claiming implementation; subsequent explicitly invoked loop execution and its evidence are recorded below. No blocking requirement decision or pending qualifying knowledge update remains.
-
----
+This is the revision of the PR's existing Spec ID/path, not a second competing feature spec. The current local branch did not contain that PR artifact; the revised contract is materialized here without checking out or merging PR code. H2–H5 replace the original spec's one/two-body-row layout, broad guide-word detection, independently owned 80ms ticker and no-settings-change restriction. The original H1–H4 history and reported checks remain accessible at the pinned source link; none establish verification of this new revision. ADR 0024 is retained with provenance and supersession notes; ADR 0025 records the newly accepted scheduling boundary.
 
 ## Requirements
 
-### R1 — Heuristic milestone and reasoning phase extraction
+### R1 — Title source and bounded message-local state
 
-1. Parse cumulative thinking text during streaming to detect the current reasoning milestone or phase:
-   - Headings (e.g. `#{1,6}\s+(.+)`).
-   - Step or phase markers (e.g. `Step`, `Phase`, `步骤`, `阶段`).
-   - Reasoning guide words (e.g. `Planning`, `Analyzing`, `Checking`, `Reviewing`, `Evaluating`, `Refining`, `Summary`, `规划`, `分析`, `检查`, `审查`, `评估`, `构思`, `总结`).
-2. When a milestone is detected, extract the latest active milestone (up to 40 characters). The existing milestone is the optional display title; this refinement does not introduce a separate title source or change extraction rules. When no milestone matches, omit the title/badge without a placeholder.
-3. For enabled peek on collapsed thinking blocks, identify thinking using the existing thinking icon slot alone; do not append UI-added `think`, `thinking` or `思考` text. Nerd mode uses ``, Unicode mode uses `💡`; retain the existing ASCII fallback and icon-mode selection. Remove labels, not matching words in actual titles or preview content.
-4. Running presentation, with or without a title:
-   - A dedicated status row contains the thinking icon, animated spinner, optional milestone badge and elapsed duration. If a title exists, it precedes the duration. Separate the spinner from the following metadata with one space, including when duration directly follows the spinner (user-confirmed follow-up).
-   - Preview text always starts on the next row, never beside the status marker and never padded to the marker's width. Untitled status example: ` ⠧ 4.9s`.
-   - **Two-line peek (`lines: 2`)**: One status row followed by up to two preview body rows: up to three rows total, not two rows including status. Use the body rows to wrap the current sanitized tail within the available width; the status prefix does not consume body columns.
-   - **One-line peek (`lines: 1`)**: One status row followed by up to one preview body row. Do not change the saved default from `1` to `2`; “默认换行” means the preview starts on a new row without another option.
-   - Retain a tail view of the latest reasoning content when it exceeds the body budget; do not let status metadata displace a configured preview row.
+1. Populate the tree only from explicit Markdown headings, explicit step/phase titles, or standalone whole-line bold titles in the current assistant's actual thinking text. Support `**Analyzing voting dynamics**` and `**Exploring voting thresholds**` as titles without requiring a `Step` prefix, numbering or specific guide words. Do not treat ordinary sentences beginning with `Planning`, `Analyzing`, `分析`, `检查` or similar guide words as phase titles merely because of that prefix, or treat partial inline bold within a prose line as a standalone title. Title-like text in fenced code, indented code or quoted examples remains excluded. Do not call a model or synthesize semantic summaries to fill missing titles.
+2. Clean display-only Markdown markers/whitespace from titles and strip terminal control sequences before rendering. Title-like code examples must not become progress claims. Do not modify stored or model-facing reasoning content.
+3. Retain at most the latest **four** titles, ordered oldest-to-newest within that window. A fifth title evicts the oldest visible title. Consecutive duplicate titles do not add a node. Reprocessing cumulative stream content or extending one streamed title must not manufacture a new stage for every update/token.
+4. This is a chronological presentation tree, not a task checklist or a reconstruction of Markdown heading depth. Earlier nodes must not receive successful-completion marks merely because a newer title appears. Titles are model text, not verified execution milestones.
+5. State belongs to one assistant message. Reset the title window, segment timer and current target at the next assistant message and existing user/session boundaries; do not accumulate across tool-mediated assistant messages into a full-task plan. Normal new-message resets must not globally reset the completed summaries retained on older native components. A tool result must not be mistaken for a new thinking message.
+6. When no title exists, show only the running status and measured duration. Do not substitute raw thought text, a guessed title or placeholder nodes. Non-reasoning/plain-text messages must not create a synthetic thinking tree.
 
-**Trace:** H2.1 and H4; `peek.ts`; `peek-controller.ts`; `icons.ts`; ADR 0024's unchanged label-target boundary.
+**Trace:** H1, H3–H4, H8, H11; inspected `peek.ts`/`peek-controller.ts`; the evidence-versus-interpretation distinction in [ADR 0013](../adr/0013-host-evidenced-open-tui-run-outcomes.md).
 
----
+### R2 — Running tree and visual consistency
 
-### R2 — Streaming elapsed timing and dynamic spinner ticker
+1. An enabled collapsed thinking block has one status root and zero to four single-row title children: **at most five rows total**. Four is a fixed title budget, not a user-facing row-count option. Do not add an overflow/count/older-content row.
+2. Running presentation identifies thinking with the existing thinking icon slot and a concise status label; the latest title is the active node with spinner indication. Without a title, active status must still be apparent. Use the existing Nerd/Unicode/ASCII selection, restrained theme styling and appropriate tree-connector fallbacks. Do not require a new font or a separate icon configuration.
+3. Example content/ordering below uses Unicode mode; exact connector/color implementation is not a new acceptance threshold:
 
-1. Track elapsed duration starting from the first thinking chunk in an assistant turn.
-2. Format elapsed seconds for display:
-   - Under 60s: formatted with one decimal place (e.g. `14.2s`, `0.0s`).
-   - 60s and above: formatted as minutes and seconds (e.g. `1m 14s`).
-3. Autonomous interval ticker:
-   - While in the `thinking` phase, run an internal timer ticker (`DEFAULT_TICKER_INTERVAL_MS = 80ms`).
-   - The ticker autonomously advances the spinner animation frame (`SPINNER_FRAMES`) and updates elapsed duration, independent of stream chunk arrivals.
-   - When no new thinking chunks arrive, the spinner continues rotating and the timer progresses smoothly without stalling.
-   - Unref the timer so it does not block node process exit.
-4. Completion:
-   - Stop the interval ticker immediately upon transitioning to `done` or `idle`.
-   - Freeze the final elapsed duration on completion.
-5. Display elapsed duration only; unverified token count estimations are excluded during streaming.
+   ```text
+   💡 思考 · 14.2s
+   ├─ 分析约束
+   ├─ 比较方案
+   ├─ 检查兼容性
+   └─ ⠹ 验证边界
+   ```
 
-**Trace:** H2.2; `peek-controller.ts`; `peek.ts`; ADR 0024.
+4. No raw thinking body is shown in collapsed presentation. Expanding uses the host's original full reasoning, not a tree-only replacement or an additional compact truncation of expanded content.
+5. Respect actual viewport width, native padding and fullscreen scrollbar reservation. Keep each row within the available display-column budget, including Chinese, emoji, combining characters and resize behavior. Clip title text rather than wrapping it into additional rows.
+6. Give status/outcome and measured elapsed duration priority over title width, including the completed summary. At ordinary/narrow widths where status and time can fit, a long title must shrink or disappear before time does. At widths too small for the fixed metadata itself, degrade safely without overflow or malformed terminal controls.
+7. While Think and the normal Workline working indicator are both active, their spinners must visibly run at the same speed, using Workline's existing normal working spinner as the reference. Match actual frame progression/rotation cadence, not merely extension refresh subscription intervals; Workline can render a host-owned spinner whose animation advances independently of those subscriptions. Additional renders or stream deltas must not accelerate Think. This does not merge elapsed measurements, require the same starting frame, or authorize changing/intercepting host-owned timers. Native retry/compaction indicators retain their existing priority and behavior.
 
----
+**Trace:** H2–H3, H8; shared icon/width behavior in `icons.ts`, `utils.ts`, `workline.ts` and Spec 0011; inspected `workline.ts` host-indicator rendering and `peek-controller.ts` frame advancement.
 
-### R3 — Persistent collapsed summary upon completion
+### R3 — Timing, completion and truthful outcomes
 
-1. When thinking completes:
-   - Cease spinner animation and switch to the completed glyph (`glyphs.done`).
-   - Display the thinking icon, completed glyph and stable parenthesized summary. When a title exists, place it before the frozen duration, separated by ` · `: `  (分析代码 · 14.2s)`. Without a title, show only duration in parentheses, e.g. `  (14.2s)`, with no empty title or dangling separator. Keep the established icon-mode equivalents.
-   - Do not render a `think` / `thinking` label in the completed state. With a supplied display title `Analyzing the four-pirate scenario shows` and frozen duration `1m 8s`, the formatting order is `  (Analyzing the four-pirate scenario shows · 1m 8s)`; this illustrates ordering and does not change the existing parser's title-length limit.
-2. Retain the summary label on the `HiddenThinkingComponent` while collapsed, replacing the legacy 300ms auto-clearing behavior.
-3. Reset lifecycle:
-   - Clear or reset the label target when a new message starts (`messageStart`), when a new session starts (`startSession`), or on session shutdown.
-   - Fallback: If thinking was abandoned without `messageEnd`, finalize thinking on `settled` after 300ms to preserve the last known duration and summary.
-4. Boundary: Presentation is strictly constrained to the existing `ThinkingLabelTarget.setHiddenThinkingLabel` bridge without introducing adapters for Assistant messages or transcript rails.
+1. Measure a thinking segment from its first actual thinking chunk, not task start, message construction, initial render or replay time. Share formatting capability with the other elapsed UI consumers instead of adding another independent thinking-only formatter. Intentional precision differences must be explicit uses of that capability, not divergent duplicate implementations; unavailable measurements remain unavailable.
+2. During active thinking, elapsed time and animation continue without requiring new stream deltas. Content/title transitions remain event-driven.
+3. When thought output gives way to answer text or the thinking segment otherwise ends, stop its dynamic subscription and freeze its measured duration. Collapse its tree into **one row** containing the thinking icon, appropriate end-state mark, latest title if available and frozen duration. Title precedes duration when it fits. Example normal completion: `💡 ✓ 验证边界 · 18.4s`. With no title, omit the title and any dangling separator.
+4. Use reliable evidence for this message/thinking segment to distinguish normal completion, interruption and failure. When available evidence cannot establish an outcome, use neutral ended presentation. Cancellation/error or abandoned-settlement fallback must not become an unconditional success check. Different terminal states follow the existing icon/theme vocabulary; they do not borrow a full-run result for an individual thinking segment or infer outcomes from arbitrary reasoning/tool text.
+5. A completion mark means the thinking segment ended normally, not that its earlier title nodes were verified or that the user's overall task was accomplished. Workline continues to own full-run outcome semantics under ADR 0013.
+6. Retain each completed summary on its own native message component through settlement and subsequent user/assistant messages. A later plain answer must not turn it back into `Thinking...`, and a new thinking segment must not overwrite the earlier summary or inherit its title window/time. Explicit feature disablement or session/UI teardown may restore native labels, including when the current message has no active custom label. Preserve safe neutral finalization if `messageEnd` is absent before switching messages and reject obsolete delayed callbacks after a new task/message/session. Do not reconstruct measurements for historical/replayed messages.
 
-**Trace:** H1; H2.3; H4; `peek.ts`; `peek-controller.ts`; ADR 0024 (persistence/boundary, not its historical metadata order).
+**Trace:** H1–H5, H11; ADRs 0013 and 0025; `index.ts`, `peek-controller.ts`, `workline.ts`, `telemetry.ts`, `tool-presentation.ts` and their existing timing boundaries.
 
----
+### R4 — Shared periodic UI refresh and demand lifecycle
 
-### R4 — Markdown syntax and inline format sanitization
+1. Workline, enhanced-tool elapsed presentation and thinking title trees use **one extension/session-owned periodic scheduling source**, not three independent repeating timers. Equalizing their timer constants alone does not satisfy this requirement.
+2. Subscribe only while a consumer needs live dynamic presentation. Preserve independently appropriate cadences; slower/static consumers must not be needlessly updated at the fastest consumer's rate. R2.7 additionally requires matched visible Think/Workline spinner speed; different consumer cadences are not permission for visibly different spinner speeds. No exact new period is mandated by this spec.
+3. Process due consumers together and coalesce extension-owned same-round render requests rather than scheduling an independent full refresh per consumer. Keep necessary component invalidation; deduplicating render requests must not leave a tool component cached with stale elapsed text.
+4. With no dynamic consumers, stop the shared periodic source. On relevant disablement, completion, UI teardown, navigation/session replacement or shutdown, remove affected demand and invalidate stale callbacks. Disposing one consumer must leave other active consumers working; re-enabling must not create duplicate subscriptions/loops. The scheduler must not keep the process alive by itself.
+5. New titles, answer transitions, completion, cancellation, failure, configuration and resize-driven presentation must remain responsive through existing event/invalidation paths; do not wait for a periodic tick or delay final state publication to the next timer slot.
+6. Share scheduling/formatting capabilities, **not** start times, elapsed values, outcome state or stream data. Concurrent tools remain independent; thinking measures its own segment; Workline measures the complete run including existing continuation/retry/compaction behavior. Merely ticking every consumer from one timestamp must not merge these measurements.
+7. Leave Git/runtime reads under `LatestRefresh`-style asynchronous coalescing and stale-result rejection. Animation ticks must not start Git commands, scan runtime files or poll external data. Preserve Pi-native retry/compaction indicators and native/third-party renderer-owned timers; no timer interception or private host patch is authorized.
+8. The intended performance improvement is less redundant extension-owned wakeup/render work. Verify that directly against representative baseline activity, and report limits of the evidence. Do not claim a specific CPU/FPS/latency improvement without measurement or invent a numeric acceptance target.
 
-1. Provide `sanitizeThinkingPreview(text: string): string` to strip markdown tokens from preview text:
-   - Header markers (`#{1,6}\s+`).
-   - Code fences (````[a-z0-9_-]*\n?````) and inline backticks (`````).
-   - Blockquote markers (`>\s+`) and list bullets (`[-*+]\s+`, `\d+[\.\)]\s+`).
-   - Normalize embedded newlines and multiple spaces into single spaces.
-2. Apply sanitization to preview text before clipping to width.
+**Trace:** H2, H5, H8; [ADR 0025](../adr/0025-shared-open-tui-ui-refresh-ownership.md); inspected `index.ts`, `tool-presentation.ts`, `refresh.ts`, `editor.ts` and `thinking-label.ts`.
 
-**Trace:** H2.4; `peek.ts`; ADR 0024.
+### R5 — Configuration compatibility and native fallback
 
----
+1. Replace the visible Off/one-line/two-line control with **On/Off** for title-tree presentation. Do not introduce a replacement user-facing title-count, row-count, refresh-rate or tree-depth setting.
+2. Accept existing saved `thinkingPeek.lines` values: `0` maps to Off; `1` and `2` map to On. Preserve whether the feature was enabled, without claiming the old raw-body appearance is retained. Keep the existing effective enabled default; do not use this revision to change unrelated defaults/preferences.
+3. Preserve unrelated and unknown saved configuration fields, existing persistence/failure behavior and global extension disablement. Loading a legacy configuration must not require a startup rewrite solely to enact this compatibility mapping. Exact new key spelling/representation is an implementation detail; legacy interpretation must be documented and tested.
+4. Pi's Hide thinking/native expansion setting continues to govern visibility. Disabled peek/extension, unsupported hosts and unavailable component/width information preserve native behavior without interrupting event processing. Keep the existing once-per-session compatibility warning and ability to recover when a valid target becomes available.
+5. Confine thought presentation to the existing controller/editor/`ThinkingLabelTarget` native collapsed-label integration. Do not replace/monkey-patch Assistant components or transcript rails. Preserve tool public renderer composition, third-party detailed controls/output, message order, tool execution and package independence.
+6. Update both English and Chinese READMEs/settings copy together, and document the intentional local behavior change in package development/integration notes. Describe the four-title bound, completion retention, truthful end states, native expansion, legacy setting mapping and scoped refresh ownership accurately.
 
-### R5 — Configuration compatibility and terminal width safety
+**Trace:** H1–H6; preserved integration boundary in ADR 0024; ADRs 0011, 0019 and 0025; inspected `config.ts`, `settings-command.ts` and package guidelines.
 
-1. Preserve existing configuration schema in `OpenTuiConfig.thinkingPeek`:
-   - `lines: 0`: Disabled (no peek label dispatched, ticker stopped).
-   - `lines: 1`: One preview body row below a separate status row (up to two rows total while thinking).
-   - `lines: 2`: Two preview body rows below a separate status row (up to three rows total while thinking).
-2. Terminal width budgeting:
-   - Budget columns based on viewport width minus padding and scrollbar reservation.
-   - Truncate text cleanly according to visible terminal width and Unicode/CJK character widths.
+### R6 — Regression and evidence preservation
 
-**Trace:** H2.5 and H4; `config.ts`; `peek.ts`; ADR 0024 (configuration schema remains unchanged).
+1. Restore PR-weakened coverage for session-generation/delayed-work isolation, shutdown, per-session warning reset, unavailable viewport/editor handling, current editor target reset, inactive/non-TUI/replayed events and absent/throwing idle probes. Update assertions only where this accepted presentation contract intentionally changes behavior.
+2. Retain scope isolation, width/grapheme/control-sequence safety and real collapsed-host integration coverage rather than checking formatter strings alone. Include shared demand disposal and coexistence with preserved native/third-party renderer behavior.
+3. Report package/workspace checks and manual verification separately. Historical PR reports of passing tests, full-workspace failures or missing live QA are historical evidence, not new outcomes for this revision. No implementation/test execution is part of this refinement endpoint.
 
----
+**Trace:** H2, H6; PR changes to `peek-controller.test.ts`, `peek.test.ts`, `telemetry.test.ts` and `thinking-label.test.ts`.
 
 ## Solution and integration contracts
 
-Keep the existing formatter/controller/host-label path; only its presentation contract is refined by H4.
+Use the existing message/controller/native-label path for thought presentation, and the shared scheduling ownership selected in ADR 0025 for the three extension-owned dynamic UI consumers. The tree's bounded title window replaces thought-tail body budgeting. Keep the host as owner of full reasoning and specialized tool output. This section defines exchanges/ownership, not an implementation sequence or a new public tool API.
 
 | Seam | Connects | Expects | Provides |
 | --- | --- | --- | --- |
-| Peek formatting | `peek-controller.ts` → `peek.ts` | Phase, sanitized tail, optional milestone, measured duration, spinner frame, resolved glyphs, width and configured body-row count | Width-safe lamp/status label, separate preview body rows while running, title-before-duration summary when done |
-| Collapsed host label | Controller/editor → `ThinkingLabelTarget` → native collapsed component | Formatted label, including newlines | Updates the existing collapsed label and requests rendering without changing expanded reasoning content; retains existing unavailable-target warning/fallback |
-| Configuration | Existing config → controller/formatter | `thinkingPeek.lines: 0 | 1 | 2` and existing icon setting | Disabled behavior for `0`; configured body-row budgets for `1`/`2`; no saved-value/default migration |
+| Thinking stream/lifecycle | Host message events → thinking controller | Current assistant identity/content, reliable message-level terminal evidence and session/task boundaries | Message-local title window, measured segment interval, truthful running/final state; stale/replay isolation |
+| Title extraction/display | Controller → parser/formatter | Actual cumulative thinking text including standalone whole-line bold titles, at most four display titles, phase/outcome, measured duration, resolved glyphs and viewport budget | Sanitized width-safe tree or one-row summary; no raw-body fallback, guessed phases, inline-bold prose nodes or per-node success claims |
+| Collapsed host surface | Controller/editor → `ThinkingLabelTarget` → native component | Formatted label and current compatible host target | Collapsed presentation/invalidation with original expanded reasoning, native fallback and scoped warnings preserved |
+| Shared UI demand | Workline/tool presentation/thinking controller ↔ session-scoped refresh owner | Dynamic demand, due-update needs, relevant invalidation and disposal boundaries | One periodic source, cadence-aware due work, coalesced render requests, event-driven responsiveness and idle shutdown; no shared outcome/elapsed state |
+| Spinner speed reference | Existing normal Workline working indicator / compatible host boundary → Think animation presentation | Workline's actual animation cadence rather than only extension render intervals | Matched visible spinner speed without taking over host timers, altering native special statuses or sharing elapsed measurements |
+| Elapsed presentation | Three UI consumers → shared duration-formatting capability | Independently measured elapsed value and intentional precision needs | Consistent formatting capability without replacing host-supplied tool timing or changing measurement definitions |
+| Preferences | Config load/settings/save → presentation consumers | Legacy `lines` and current On/Off choice, global enablement, icon/theme settings and unknown legacy data | Stable enabled/disabled interpretation and bounded tree; preserved unrelated configuration and persistence semantics |
+| External data/native renderers | Existing refresh/composition owners → UI | Coalesced async snapshots, native renderer components/timers and host statuses | Existing data freshness and specialized capabilities without animation-driven I/O or scheduler takeover |
 
-**Trace:** H3–H4; inspected `peek.ts`, `peek-controller.ts`, `thinking-label.ts`, `icons.ts` and `config.ts`. No new host API or component ownership is introduced.
+## Input-to-outcome acceptance scenarios
 
-## Verification and Acceptance Criteria
+| Scenario | Given / when | Required observable outcome |
+| --- | --- | --- |
+| Latest four | One assistant emits five distinct explicit thinking headings | Root plus the newest four titles, in order; oldest disappears, no sixth/overflow row and no raw body |
+| Screenshot-style bold titles | One assistant's thinking contains standalone `**Analyzing voting dynamics**`, ordinary explanatory prose, then standalone `**Exploring voting thresholds**` and more prose | Two clean title nodes in source order, without a required prefix/number; explanatory prose is absent; native expansion still shows the original full thinking |
+| Bold false positives | Thinking contains `I am **checking votes** now.`, ordinary `Analyzing ...` prose, or title-like bold lines inside fenced/indented code or quoted examples | None creates a title node; genuine standalone bold titles outside those examples still work |
+| Bold streaming and bounds | Standalone bold syntax/title arrives in chunks, cumulative content is replayed, adjacent identical bold titles appear, then five distinct titles are emitted | No raw unmatched Markdown marker leaks, per-token/duplicate-stage accumulation or lost four-title bound; once a complete standalone bold title is available it is recognized; completion retains the latest title and frozen duration |
+| Streaming identity | Cumulative text is replayed to the parser, one heading grows token-by-token, or adjacent identical headings appear | No token-per-node growth or duplicate-stage accumulation; same message remains bounded |
+| Honest extraction | Ordinary text starts with `Analyzing`/`分析`, or a code example contains heading-like syntax | No invented stage/title; no model summarizer call; genuine explicit titles outside the example still work |
+| No title/plain answer | Thinking has no explicit title, or a message has no thinking at all | First case shows status/duration only; second retains native plain-answer behavior without a synthetic tree |
+| Long Chinese title | An 80-column viewport has the existing 77-column label budget, a long title and known elapsed time | Running/final rows fit; time and state remain visible before allocating residual width to title |
+| Other widths/icons | CJK, emoji/combining text and narrow/wide resize across Nerd/Unicode/ASCII modes | At most five single-row running lines; safe truncation, existing glyph selection and usable connector fallback |
+| Complete normally | Titled/untitled thinking ends normally or gives way to answer text | One-row summary, latest title when present, measured duration frozen, subscription released; settlement does not clear it |
+| Cancel/fail/uncertain | Reliable current-message cancellation/error evidence exists, or abandoned thinking has no decisive outcome | Appropriate interruption/failure/neutral mark, never unconditional success; no inference from thought text or full-run result |
+| Next assistant/tool boundary | Tool result follows one assistant and a new assistant subsequently starts | Tool result does not create a tree; next assistant starts a fresh title window and segment timer without erasing or overwriting older completed summaries |
+| Retained summary / plain final answer | A titled thinking message completes; a later user message or tool-mediated assistant emits only answer text | Earlier frozen title/duration/outcome stays on its own component, no global native-label reset and no synthetic thinking for the plain answer |
+| Retained-summary cleanup | Earlier components have retained summaries but the current message has no thinking; feature is disabled or explicit session/UI teardown occurs | Native labels are restored idempotently; no active current label is required for cleanup; no historical timer or replay measurement is created |
+| Native expansion | User expands/collapses thinking while activity or a retained summary exists | Original full reasoning stays available; no tree substitution in expanded content; collapsed presentation follows current state |
+| Shared periodic source | Workline, enhanced tools and thinking are dynamically active together, with no new stream delta | One extension-owned periodic source services due consumers and coalesces extension render requests; animation/time continue without stale cached tools |
+| Matched spinner speed | Think and the normal Workline working spinner are simultaneously visible, including a stream pause and extra event-driven renders | Actual spinner frame progression/rotation cadence matches Workline in the selected supported icon mode; equal 250ms extension subscriptions with a faster host-owned spinner do not count as a pass; extra renders/deltas do not accelerate Think |
+| Independent spinner lifecycle | Thinking ends while Workline remains active, or thinking restarts within an ongoing run | Think freezes/completes or resumes at the matched speed as appropriate; Workline continues normally, and neither elapsed interval adopts the other's start/end boundaries |
+| Independent timing | Two tools and a thinking segment have different starts/ends while Workline continues | Each elapsed interval stays independent; one completion does not stop remaining refresh demand or change full-run semantics |
+| Idle and re-enable | Consumers finish, relevant features disable/re-enable, or UI tears down | No idle periodic source or duplicate subscription; unaffected active consumers continue; final/configuration updates do not await a periodic slot |
+| Session isolation | Pending periodic/delayed callbacks exist during navigation, task change or shutdown | No stale labels/invalidation/measurements reach replacement state; current demand cleans up and native fallback stays safe |
+| No tick-driven I/O | Many UI ticks occur while Git/runtime inputs do not change | No animation-triggered Git/runtime reads; existing single-flight/latest-result behavior remains intact |
+| Preserved native behavior | Native shell/third-party specialized renderer or retry/compaction indicator is present | Their capabilities, timer ownership, lifecycle cleanup and priority remain intact; no private timer interception |
+| Legacy configuration | Saved `lines: 0`, `1` or `2` loads and the user operates settings | Off, On, On respectively; only On/Off exposed; unrelated/unknown preferences survive and no mandatory startup rewrite occurs |
+| Incompatible/recovered host | Width/editor/component is missing or invalid, then becomes compatible | Native fallback, at most one compatibility warning per session and later recovery; a new session can warn once again |
 
-1. **Phase/Milestone Parser Tests (`peek.test.ts`)**:
-   - Matches markdown headings (`#`), step markers (`Step 1`, `步骤二`), and reasoning guide words in English and Chinese.
-   - Preserves the latest active milestone from cumulative thinking text.
-   - Falls back gracefully to plain tail when no milestone matches.
-2. **Sanitizer Tests (`peek.test.ts`)**:
-   - Strips code fences, backticks, header markers, quotes, and bullets.
-   - Normalizes whitespace into clean single-line preview strings.
-3. **Timer & Label Formatting Tests (`peek.test.ts`)**:
-   - Formats elapsed time correctly under 60s and over 60s.
-   - Formats one- and two-body-row previews below a separate status row within width budgets, both with and without a title.
-   - Formats completed summary with milestone before frozen duration upon done; omits absent title cleanly. No UI-added `think` / `thinking` label remains in any enabled collapsed peek state.
-4. **Controller Lifecycle & Dynamic Ticker Tests (`peek-controller.test.ts`)**:
-   - Starts timer on first thinking chunk and freezes on completion.
-   - Ticker continuously rotates spinner frame and advances elapsed time without new stream deltas.
-   - Ticker stops immediately when thinking finishes or is cleared.
-   - Preserves completed label across settlement instead of clearing after 300ms.
-   - Cleans up label on next message start or session reset.
-   - Retains existing warning and fallback when host target is unavailable.
+**Verification guidance for later execution:** Use deterministic clocks/lifecycle fixtures to observe scheduling sources, demand, invalidation/render requests and cleanup without inferring correctness from elapsed wall-time sleeps alone. Check actual pinned-host collapsed rendering in regular/fullscreen modes, including expansion, input/scroll stability, resize and specialized renderers. Restore the safety regressions listed in R6. Compare wakeup/render counts for representative standalone/overlapping/idle consumers against the current baseline and PR behavior; native/third-party timers are outside the one-extension-source count. Record any measured performance result without promising an unagreed threshold. Run relevant package/workspace validation and report pre-existing/unrelated failures separately. Perform live-terminal/font/IME visual checks before claiming interactive acceptance. These are future verification requirements, not checks executed by this document revision.
 
----
+**H8 verification additions:** Exercise the screenshot-style fixtures through cumulative message events and the actual collapsed-host surface, not the parser alone. For speed, observe both actual rendered spinner sequences against a deterministic host clock/cadence, including a host cadence different from the extension subscription period, stream stalls and extra renders; merely asserting equal timer constants or nonzero frame changes is insufficient. Confirm the same-speed result visually in regular/fullscreen TUI and the existing supported icon modes. Preserve the one-extension-scheduling-source, idle cleanup, native-timer ownership and independent elapsed-measurement assertions. H8–H9 only specified these checks; subsequent H10 execution evidence is recorded below. Automated evidence does not replace the required live visual check.
 
-## Input-to-outcome acceptance scenarios for H4
+## Decisions and exclusions
 
-- **Completed, titled:** Given an enabled collapsed peek with a detected title and elapsed duration, when reasoning finishes, the spinner becomes the completed glyph and the label reads `  (标题 · 1m 8s)` in Nerd mode. The title precedes frozen time and no extra thinking word is present. Settlement retains the summary.
-- **Running, untitled, two body rows:** Given enabled `lines: 2`, no detected title, 4.9 seconds elapsed, enough terminal width and sanitized reasoning long enough for two body rows, when peek renders, row 1 is ` ⠧ 4.9s` for that spinner frame. Reasoning starts at the body left edge on row 2 and continues on row 3; neither body row shares the marker row or inherits its indentation. Later deltas continue showing the latest tail within those two body rows.
-- **Running, titled:** Given the same mode with a detected milestone, when peek renders, the title is on the status row before elapsed time and the two preview body rows remain available. The title does not reintroduce an inline body or an added thinking label.
-- **One body row and existing default:** Given enabled `lines: 1`, when reasoning streams, preview text starts below status and occupies at most one body row. Existing saved `1` and the default `1` stay unchanged.
-- **No title on completion:** Given an untitled running peek, when it completes, show `  (4.9s)` for that frozen duration, without an empty title, dangling ` · ` or added thinking word.
-- **Width, icon modes and content preservation:** Given narrow/wide terminals and CJK/emoji content, when these states render or resize, every row fits its visible-column budget. Nerd/Unicode lamp glyphs and the existing ASCII fallback follow the current icon setting. Genuine `think` / `thinking` words in reasoning text or a title are not deleted.
-- **Scope boundary:** Given peek disabled (`lines: 0`), the extension disabled, or an expanded thinking block, this refinement does not restyle those surfaces. Existing native behavior and unsupported-host warning/fallback remain unchanged.
+- **Selected route:** Revise this single Spec with necessary ADR maintenance. No separate ticket set or implementation-plan artifact adds value at this endpoint. The next execution stage, if requested, is `grimoire-loop`; it is not invoked here.
+- **New knowledge:** ADR 0025 records shared scheduling ownership and non-ownership boundaries; ADR 0024 is preserved from the PR with a bidirectional partial-supersession link. No CONTEXT entry is added solely for UI row limits/settings or progress reporting.
+- **Follow-up knowledge check:** H8 adds presentation requirements within the existing MilestoneExtraction/native-label and shared-refresh boundaries; it does not change scheduling ownership or authorize host timer takeover. These ordinary task requirements stay in this Spec. No CONTEXT/ADR update or new architectural record is needed for this follow-up.
+- **Preserved boundaries:** Native reasoning expansion and label-host fallback, tool public composition/specialized output, independent packages, external snapshot refresh, independent timing/outcome evidence and existing unrelated configuration remain intact.
+- **Excluded behavior:** Raw-body row modes, unbounded/cross-message title history, task-checklist claims, synthetic/model-generated titles, new count/rate controls, animation-driven external polling, host/third-party timer takeover, real-time token estimation and changes to execution/accounting/permissions.
+- **Explicit implementation freedom:** Exact scheduler/formatter APIs, timer primitive, numeric cadence values, configuration key spelling and theme-aware connector choices are not separately selected requirements. H8 constrains the visible result: Think must match normal Workline spinner speed under R2.7 even if internal consumer update cadences differ. They must meet the observable contracts above; they are not permission to introduce new behavior or skip regression coverage.
+- **Evidence limit:** No code or test changes, build/typecheck/test/benchmark/live QA, branch/PR mutation, staging or commit is part of this accepted refinement. Existing PR implementation and reported verification do not satisfy the revised title-tree/shared-refresh requirements by themselves.
 
-**Verification handoff:** Extend formatter and controller/host-label integration coverage for these scenarios and retain existing timer, sanitization and lifecycle checks. Verify the actual collapsed host label displays the separate body rows, not only the formatter string. No tests or runtime QA were executed during the spec-only refinement. The later loop execution evidence below establishes the automated checks actually performed.
+## Execution evidence — 2026-10-16
 
-## Explicit Exclusions
+**Historical baseline only:** The following implementation/check results precede H8–H9. They are retained as evidence for the earlier contract, not verification of standalone bold titles or matched actual spinner speed. In particular, the reported equal 250ms Workline/thinking subscriptions do not establish R2.7. The later H8 follow-up execution section records new implementation/automated evidence separately; live visual acceptance remains pending.
 
-- No monkey-patching or wrapping of Assistant message components or transcript rails.
-- No real-time token count estimation during streaming.
-- No Editor border styling modifications for thinking state.
-- No changes to saved configuration schema or settings command options.
-- Restyling expanded thinking blocks, disabled peek/native labels, or unrelated delegate thinking metadata.
-- Changing the default peek mode, icon-mode resolution, title extraction limits, timer ownership, or configuration schema as part of H4.
-- Implementation, ticket decomposition, implementation planning or QA execution at this spec-only endpoint.
+The refinement-only permissions and evidence limits above describe that completed stage; H7 authorizes this later execution. Work is on `feat/thinking-style` from PR head `413a7b0`, with approved refinement artifacts preserved before checkout. No implementation plan, commit or push was created.
+
+- **Implementation:** `peek.ts` now extracts explicit, code-aware, consecutive-deduplicated latest-four titles and formats five-row running trees / single-row outcome summaries, prioritizing measured time over long titles. `peek-controller.ts` owns independent segment timing, message-level outcomes, immediate neutral settlement, native fallback and generation-scoped refresh demand. Frozen labels refit/rebind through the existing editor lifecycle, without patching Assistant components.
+- **Shared ownership:** `ui-refresh.ts` is the single extension-owned periodic source injected into Workline, tool presentation and thinking. Current internal cadences are 250ms for Workline/thinking and 500ms for tools. A common origin aligns due work; duplicate render channels are batched, stale generations are rejected, missed frames are not replayed and idle demand is removed. Tool public invalidation/native shell timer cleanup are preserved; unavailable thinking targets do not poll. Independent clocks and shared duration-formatting policies preserve measurement meanings.
+- **Compatibility/docs:** Settings expose only On/Off while retaining `thinkingPeek.lines` storage (0 Off, 1/2 On; explicit edits save 0/1). Tests preserve startup file bytes and unknown nested fields. Both READMEs and development guidance describe the new behavior. The former raw-body-only tests were replaced by title-tree contracts; previously weakened host/lifecycle safety assertions were restored.
+- **Automated evidence:** The baseline PR package suite passed 326 tests before implementation. The revised package suite currently passes 315 tests without skips, including actual pinned-host regular/fullscreen collapsed rendering, expansion, narrow/frozen resize, independent tool timing, entry-point coalescing and editor replacement. Root `bun run test` also completed successfully: six repository tests, 606 delegate tests passed and one existing POSIX-only test skipped on Windows, plus the then-current 313-test UI suite. Two subsequently added UI regressions passed in the 315-test package rerun; delegate/root evidence is reused because no delegate/root source or dependencies changed.
+- **Repeat-run fixture fix:** A final repeat exposed a Windows temporary-directory cleanup race in the new external-snapshot integration test: settlement intentionally starts asynchronous reads, so fixture removal could precede child-process handle release. The test now awaits those observed read promises before cleanup, without changing production refresh behavior. Its integration file passed three consecutive reruns, followed by another passing 315-test UI suite. The built extension also passed a Node ESM import smoke check.
+- **Final workspace gates:** `bun run typecheck`, `bun run build`, `bun run check` (103 files) and `git diff --check` passed after the production changes. Formatting preserves the repository's intentional Biome opt-out for imported source/tests; no unrelated mass reformat was performed.
+- **Scheduling observation:** Deterministic combined-consumer tests observe one maximum active extension-owned periodic timer, four wakeups across a one-second 250/500ms workload, one shared Workline/thinking render channel per round and zero periodic wakeups after demand disposal. Actual tool components remain fresh through public invalidation. A root integration test confirms animation ticks make no Git/runtime snapshot requests while settlement still does. These are controlled scheduling observations, not measured live CPU/FPS gains; host/third-party timers are intentionally excluded.
+- **Review/check:** Inline review traced scheduler cleanup, native label targeting, tool invalidation, configuration consumers and outcome boundaries against R1–R6. The accepted representation/cadence implementation choices stay within the recorded freedom. No confirmed implementation blocker remains in inspected code; complete visual acceptance is not established by automated tests.
+- **Remaining required evidence:** Live terminal/font/IME and external-provider visual interaction in both TUI modes was not performed. Do not mark this Spec Implemented or ADR 0025 Completed until the required human visual evidence is available. The contract remains Refined; ADR 0025 is Testing, not an overall acceptance claim.
 
 
-## H4 execution evidence — 2026-10-16
+## H8 follow-up execution evidence
 
-- **Authorization and route:** The user explicitly invoked `grimoire-loop` after approving H4. Implement → targeted verification → report; no separate planning artifact, tickets, commit or push. The spec-only permissions above describe the earlier completed refinement stage, not this later execution.
-- **Changes:** `peek.ts` now uses icon-only identification, title-before-time metadata, a dedicated running status row and one/two full-width body rows. Formatter/controller expectations, actual host-label integration tests and the existing telemetry integration test follow that contract. Both package READMEs document the same layout. Existing configuration, timer/controller lifecycle and host bridge production code were not changed by H4 execution.
-- **Red → green:** The 49 existing focused tests passed before H4 test changes. New expectations failed against the old formatter, including the actual Pi 1.1.0 collapsed component in regular/fullscreen modes. After implementation, all 56 focused tests passed.
-- **Package verification:** `bun run --filter @wangjq4214/pi-open-tui test` passed all 326 tests without skips, including the real pinned host's rendered multiline labels, expanded/native behavior, narrowed viewport and frozen completion summary. `bun run typecheck` and `bun run --filter @wangjq4214/pi-open-tui build` passed. Tracked-file Biome checks passed (103 files); imported source/tests retain their pre-existing Biome opt-out.
-- **Whole-workspace evidence limits:** `bun run check` fails on the pre-existing, unchanged, untracked `packages/pi-open-tui/fix-test.cjs` syntax errors. `bun run test` passed the six root tests, then exceeded the 120-second execution limit while running delegate tests and reported `Missing partial output file` in `length limit and presentation truncation remain independent`. That test failed the same way in isolation; no delegate source or test files were modified. These are not passing whole-workspace gates and were not repaired by changing this feature's scope.
-- **Remaining limitation:** Automated host rendering is not live terminal/font/IME or external-provider visual acceptance. No such manual QA was performed. Existing icon-mode fallback and title extraction limits remain unchanged.
+- **Scope/route:** H10 authorized implementation of the two screenshot follow-up requirements. No separate plan, tickets, dependency/configuration-schema changes, host timer patches, commit or push were added. Pre-existing uncommitted work was preserved.
+- **Bold-title implementation:** `peek.ts` recognizes standalone complete `**title**` lines without numbering or guide-word heuristics. Partial inline bold, malformed markers and quoted/fenced/indented examples remain excluded. Cumulative parsing preserves consecutive deduplication, latest-four bounds, cleaned display, original expansion and frozen summaries.
+- **Matched-speed implementation:** The editor exposes a read-only sample of the normal native working indicator's `renderSpinnerInBorder` output. The existing editor render lifecycle republishes this frame into Think; shared 250ms demand still updates elapsed presentation, but does not drive the native-backed spinner's phase. `spinner.ts` shares the standard ASCII rotation-phase mapping between Workline and Think, preserving custom host frames, including empty/static indicators. Native special statuses are not used as a normal-working reference; unavailable native indicators retain the existing fallback. No native timer/frame fields are read or mutated, and no additional periodic source is introduced.
+- **Criterion evidence — R1.1/H8:** Parser regressions cover the two screenshot titles, Chinese/arbitrary titles, mixed heading/step/bold input, every chunk boundary, replay/deduplication, malformed/inline/quoted/code negatives and four-title eviction. Actual collapsed-host tests stream the screenshot-style source through message events, exclude explanatory body from the tree and retain it on native expansion.
+- **Criterion evidence — R2.7/R4.2/H8:** Six actual pinned-host cases cover regular/fullscreen × Unicode/Nerd/ASCII, default 80ms and custom 37ms/140ms native animation against unchanged 250ms elapsed demand. They compare actual displayed spinner frames/rotation phase across multiple rotations, both Workline placements and compact/full labels, stream pauses and repeated renders. They verify that rendering settles without an endless feedback loop, thinking freezes independently while native Workline continues, and elapsed boundaries remain independent. Fullscreen fixtures start the actual alternate screen. Native frame ownership and empty/custom/static indicators also have focused coverage; custom ASCII replacement characters are preserved literally.
+- **Verification:** The final affected UI package suite passes **328 tests**, no failures/skips. Root `bun run test` completed successfully before the final literal-custom-frame safeguard; the affected UI suite was then rerun at 328 tests after that safeguard, while unchanged repository/delegate evidence was reused. Final `bun run typecheck`, `bun run build`, `bun run check` (103 files) and `git diff --check` pass. The built extension passed a Node ESM import smoke check. No live CPU/FPS improvement is claimed.
+- **Inline review/check:** Checked native-renderer sampling/fallback, current editor targeting and lifecycle cleanup, actual-host frame publication order, bounded title extraction, width/control safety, standard ASCII phase adaptation, custom indicator preservation and timing/outcome separation against the scoped H8 requirements. No confirmed blocker remains in this scope; passing automated tests are not overall visual acceptance.
+- **Remaining human evidence / waiting for user:** Reload the freshly built/source extension once (avoid duplicate installed/source copies), enable Hide thinking and Thinking titles, then inspect the screenshot-style titles and simultaneous Workline/Think animation in both TUI modes. Confirm typing/scroll/IME, expansion, resize and completion/cancellation behavior in the real terminal/font/provider environment. This check was not performed here; Spec status remains Refined and ADR 0025 remains Testing.
+
+
+## H11 summary-retention correction
+
+- **Cause reproduced:** Normal `messageStart` previously called `resetAndClear`, which invoked Pi's global `setHiddenThinkingLabel()`. That API resets every existing Assistant component to `Thinking...`, not only the new/current message. A regression using the actual pinned host setter and real Assistant components reproduced the summary loss in both TUI modes before the fix.
+- **Correction:** Normal user/assistant message starts now finalize abandoned active reasoning neutrally and reset only message-local state/target. Completed summaries remain on their original native components. Current-label activity is separate from whether any labels were applied, so feature disablement and explicit session/UI teardown still restore native labels after a later plain answer. No extra timer, component history map, host patch or reconstructed measurement is added.
+- **Verification:** The affected UI suite passes **330 tests** with no failures/skips, including both real-host multi-message regressions, fresh title/time isolation, plain final answers, missing `message_end` neutral finalization, subsequent timer inactivity and idempotent native restoration when disabled. `bun run typecheck`, `bun run build`, `bun run check` and `git diff --check` pass. The unrelated delegate suite is not rerun for this controller-only correction. Real-terminal visual confirmation remains pending; overall Spec/ADR acceptance status is unchanged.
