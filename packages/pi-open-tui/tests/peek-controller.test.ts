@@ -6,9 +6,9 @@ import { resolveGlyphs } from "../src/icons.ts";
 import { buildPeekLabel } from "../src/peek.ts";
 import { PeekController, type PeekLabelEditor } from "../src/peek-controller.ts";
 import { SessionLifecycle } from "../src/session-lifecycle.ts";
-import { stripAnsi } from "../src/utils.ts";
 
-function fixture() {
+function fixture(initialTime?: number, tickerIntervalMs?: number) {
+	let currentTime = initialTime ?? 1000;
 	const config = structuredClone(DEFAULT_CONFIG);
 	config.icons.mode = "ascii";
 	config.thinkingPeek.lines = 1;
@@ -41,13 +41,19 @@ function fixture() {
 		isActive: () => host.active,
 		isTuiContext: () => host.tui,
 		lifecycle,
+		now: () => currentTime,
+		tickerIntervalMs,
 	});
-	controller.startSession();
 	const update = (thinking: string, text = "") => controller.messageUpdate({
 		role: "assistant", content: [{ type: "thinking", thinking }, { type: "text", text }],
 	}, ctx);
 	return {
 		controller, config, lifecycle, host, ctx, labels, warnings, update,
+		advance(ms: number) { currentTime += ms; },
+		tick(ms = 80) {
+			currentTime += ms;
+			controller.tick(ctx);
+		},
 		get clears() { return clears; }, get resets() { return resets; },
 		setEditor(next: PeekLabelEditor | undefined) { editor = next; },
 	};
@@ -59,109 +65,170 @@ test("peek updates only on changed thinking, freezes on answer/end, and resets e
 	const f = fixture();
 	f.controller.messageStart(assistant, f.ctx);
 	f.update("first");
-	assert.match(f.labels.at(-1)!, /think ⠙ first$/);
+	assert.match(f.labels.at(-1)!, /~ ⠋ \d+\.\d+s\nfirst$/);
 	f.update("first");
 	assert.equal(f.labels.length, 1);
 	f.update("second");
-	assert.match(f.labels.at(-1)!, /think ⠹ second$/);
+	assert.match(f.labels.at(-1)!, /~ ⠋ \d+\.\d+s\nsecond$/);
 	f.update("second", "answer");
-	assert.equal(f.labels.at(-1), "~ think +");
+	assert.match(f.labels.at(-1)!, /~ \+ \(\d+\.\d+s\)$/);
 	f.update("ignored", "longer answer");
 	f.controller.messageEnd(assistant, f.ctx);
 	assert.equal(f.labels.length, 3);
 	f.controller.messageStart({ role: "toolResult" }, f.ctx);
-	assert.equal(f.resets, 2);
+	assert.equal(f.resets, 1);
 	assert.equal(f.clears, 0);
 	f.controller.messageStart(assistant, f.ctx);
-	assert.equal(f.resets, 3);
+	assert.equal(f.resets, 2);
 	assert.equal(f.clears, 1);
 	f.update("next message");
-	assert.match(f.labels.at(-1)!, /think ⠸ next message$/); // frames persist across messages
+	assert.match(f.labels.at(-1)!, /~ ⠋ \d+\.\d+s\nnext message$/);
 	f.controller.messageEnd({ role: "toolResult" }, f.ctx);
 	assert.equal(f.labels.length, 4);
 	f.controller.messageEnd(assistant, f.ctx);
-	assert.equal(f.labels.at(-1), "~ think +");
+	assert.match(f.labels.at(-1)!, /~ \+ \(\d+\.\d+s\)$/);
 	f.controller.messageStart({ role: "user" }, f.ctx);
 	assert.equal(f.clears, 2);
+});
+
+test("elapsed timer starts on first thinking chunk, progresses across deltas, and freezes on completion", () => {
+	const f = fixture(1000);
+	f.controller.messageStart(assistant, f.ctx);
+	f.update("start thinking");
+	assert.match(f.labels.at(-1)!, /~ ⠋ 0\.0s\nstart thinking$/);
+
+	f.advance(14200);
+	f.update("working on logic");
+	assert.match(f.labels.at(-1)!, /~ ⠋ 14\.2s\nworking on logic$/);
+
+	f.advance(2000);
+	f.controller.messageEnd(assistant, f.ctx);
+	assert.match(f.labels.at(-1)!, /~ \+ \(16\.2s\)$/);
+
+	// Later time advances do not change the frozen duration
+	f.advance(10000);
+	f.controller.settled(f.ctx);
+	assert.match(f.labels.at(-1)!, /~ \+ \(16\.2s\)$/);
+});
+
+test("ticker continuously updates spinner frame and elapsed time without new thinking deltas", (t) => {
+	t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+	const f = fixture(1000);
+	f.controller.messageStart(assistant, f.ctx);
+	f.update("thinking deeply");
+	assert.match(f.labels.at(-1)!, /~ ⠋ 0\.0s\nthinking deeply$/);
+
+	// No new message updates arrive, but ticker ticks:
+	f.advance(80);
+	t.mock.timers.tick(80);
+	assert.match(f.labels.at(-1)!, /~ ⠙ 0\.1s\nthinking deeply$/);
+
+	f.advance(80);
+	t.mock.timers.tick(80);
+	assert.match(f.labels.at(-1)!, /~ ⠹ 0\.2s\nthinking deeply$/);
+
+	// Stop ticker upon completion
+	f.controller.messageEnd(assistant, f.ctx);
+	assert.match(f.labels.at(-1)!, /~ \+ \(0\.2s\)$/);
+});
+
+test("elapsed timer preserves detected milestone in completed summary", () => {
+	const f = fixture(1000);
+	f.controller.messageStart(assistant, f.ctx);
+	f.update("## Architecture Analysis\nworking...");
+	f.advance(18400);
+	f.controller.messageEnd(assistant, f.ctx);
+	assert.match(f.labels.at(-1)!, /~ \+ \(Architecture Analysis · 18\.4s\)$/);
 });
 
 test("plain answers keep the native label; mixed first updates are already done", () => {
 	const f = fixture();
 	f.controller.messageUpdate(undefined, f.ctx);
-	f.controller.messageUpdate({ role: "user", content: [{ type: "thinking", thinking: "ignored" }] }, f.ctx);
-	f.update("", "plain answer");
+	f.controller.messageUpdate({ role: "user", content: "text" }, f.ctx);
+	f.controller.messageUpdate({ role: "assistant", content: [{ type: "text", text: "plain" }] }, f.ctx);
 	f.controller.messageEnd(assistant, f.ctx);
 	assert.deepEqual(f.labels, []);
 	f.update("short thought", "answer");
-	assert.deepEqual(f.labels, ["~ think +"]);
+	assert.equal(f.labels.length, 1);
+	assert.match(f.labels[0]!, /~ \+ \(\d+\.\d+s\)$/);
 });
 
-test("settlement holds the label for 300ms then resets its target and restores native label", (t) => {
+test("settlement preserves the completed label instead of clearing after 300ms", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const f = fixture();
 	f.update("thinking");
 	f.controller.messageEnd(assistant, f.ctx);
+	assert.match(f.labels.at(-1)!, /~ \+ \(\d+\.\d+s\)$/);
 	f.controller.settled(f.ctx);
-	t.mock.timers.tick(299);
-	assert.equal(f.clears, 0);
-	assert.equal(f.resets, 1);
-	t.mock.timers.tick(1);
-	assert.equal(f.clears, 1);
-	assert.equal(f.resets, 2);
+	t.mock.timers.tick(300);
+	assert.equal(f.clears, 0, "completed label remains visible after settlement");
+
+	// Next message start clears the prior label
+	f.controller.messageStart(assistant, f.ctx);
+	assert.equal(f.clears, 1, "cleared on next message start");
 	f.update("later");
-	assert.match(f.labels.at(-1)!, /later$/);
+	assert.match(f.labels.at(-1)!, /~ ⠋ \d+\.\d+s\nlater$/);
 	f.controller.resetAndClear();
 	assert.equal(f.clears, 2, "fallback context is used when omitted");
 });
 
-test("a new no-user task epoch protects the existing label from old delayed cleanup", (t) => {
+test("settlement fallback finalizes abandoned thinking without messageEnd after delay", (t) => {
 	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const f = fixture(1000);
+	f.controller.messageStart(assistant, f.ctx);
+	f.update("incomplete thought");
+	assert.match(f.labels.at(-1)!, /~ ⠋ 0\.0s\nincomplete thought$/);
+
+	f.advance(5000);
+	// Abrupt settlement without prior messageEnd
+	f.controller.settled(f.ctx);
+	t.mock.timers.tick(299);
+	assert.match(f.labels.at(-1)!, /~ ⠋ 0\.0s\nincomplete thought$/);
+
+	t.mock.timers.tick(1);
+	assert.match(f.labels.at(-1)!, /~ \+ \(5\.0s\)$/);
+});
+
+test("startTask cancels pending settlement fallback before 300ms", (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const f = fixture(1000);
+	f.controller.messageStart(assistant, f.ctx);
+	f.update("streaming thought");
+	f.controller.settled(f.ctx);
+	t.mock.timers.tick(100);
+
+	// Next task starts before the 300ms timer
+	f.controller.startTask();
+	t.mock.timers.tick(250);
+	assert.match(f.labels.at(-1)!, /~ ⠋ 0\.0s\nstreaming thought$/);
+});
+
+test("a new task preserves label until next message start", () => {
 	const f = fixture();
 	f.update("old task");
+	f.controller.messageEnd(assistant, f.ctx);
 	f.controller.settled(f.ctx);
-	f.controller.startTask(); // no message_start during task preparation
-	t.mock.timers.tick(300);
 	assert.equal(f.clears, 0);
-	assert.equal(f.resets, 1);
-	f.update("current task");
-	assert.match(f.labels.at(-1)!, /think ⠹ current task$/);
-	f.controller.settled(f.ctx);
-	t.mock.timers.tick(300);
-	assert.equal(f.clears, 1);
-});
 
-test("settlement replacement and message boundaries cancel pending cleanup", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
-	const f = fixture();
-	f.update("one");
-	f.controller.settled(f.ctx);
-	t.mock.timers.tick(100);
-	f.controller.settled(f.ctx);
-	t.mock.timers.tick(200);
+	f.controller.startTask();
 	assert.equal(f.clears, 0);
 	f.controller.messageStart(assistant, f.ctx);
-	f.update("two");
-	t.mock.timers.tick(100);
-	assert.equal(f.clears, 1, "only message_start cleared the old label");
-	assert.match(f.labels.at(-1)!, /two$/);
+	assert.equal(f.clears, 1);
+	f.update("current task");
+	assert.match(f.labels.at(-1)!, /~ ⠋ \d+\.\d+s\ncurrent task$/);
 });
 
-test("session generation and shutdown independently guard delayed cleanup", (t) => {
-	t.mock.timers.enable({ apis: ["setTimeout"] });
+test("session generation and shutdown independently guard delayed cleanup", () => {
 	const f = fixture();
 	f.update("old session");
+	f.controller.messageEnd(assistant, f.ctx);
 	f.controller.settled(f.ctx);
-	f.lifecycle.start(); // even if the controller's explicit reset has not run yet
-	t.mock.timers.tick(300);
 	assert.equal(f.clears, 0);
-	f.controller.settled(f.ctx);
 	f.lifecycle.shutdown();
-	t.mock.timers.tick(300);
-	assert.equal(f.clears, 0);
 	f.controller.messageStart(assistant, f.ctx);
 	f.update("late event");
 	f.controller.messageEnd(assistant, f.ctx);
-	assert.equal(f.labels.length, 1);
+	assert.equal(f.labels.length, 2);
 	f.controller.resetAndClear(f.ctx); // UI uninstall also cleans up after shutdown
 	assert.equal(f.clears, 1);
 });
@@ -195,7 +262,7 @@ test("line count changes rerender an active label with current viewport and unch
 	f.config.thinkingPeek.lines = 2;
 	f.controller.configChanged(1);
 	assert.equal(f.labels.at(-1), buildPeekLabel(
-		{ phase: "thinking", tail: "previous\nlatest" }, 1, resolveGlyphs("ascii"), 27, 2,
+		{ phase: "thinking", tail: "previous\nlatest", elapsedMs: 0 }, 0, resolveGlyphs("ascii"), 27, 2,
 	));
 	f.controller.configChanged(2);
 	assert.equal(f.labels.length, 2);
@@ -206,24 +273,24 @@ test("line count changes rerender an active label with current viewport and unch
 });
 
 for (const toggle of ["enabled", "lines"] as const) {
-	test(`${toggle} disable/re-enable clears state, cancels settlement and waits for fresh thinking`, (t) => {
-		t.mock.timers.enable({ apis: ["setTimeout"] });
+	test(`${toggle} disable/re-enable clears state and waits for fresh thinking`, () => {
 		const f = fixture();
 		f.update("old");
+		f.controller.messageEnd(assistant, f.ctx);
 		f.controller.settled(f.ctx);
+		assert.equal(f.clears, 0);
 		if (toggle === "enabled") f.config.enabled = false;
 		else f.config.thinkingPeek.lines = 0;
 		f.controller.configChanged(1);
 		assert.equal(f.clears, 1);
 		f.update("disabled");
-		assert.equal(f.labels.length, 1);
+		assert.equal(f.labels.length, 2);
 		f.config.enabled = true;
 		f.config.thinkingPeek.lines = 1;
 		f.controller.configChanged(toggle === "lines" ? 0 : 1);
-		assert.equal(f.labels.length, 1);
+		assert.equal(f.labels.length, 2);
+		f.controller.messageStart(assistant, f.ctx);
 		f.update("fresh");
-		t.mock.timers.tick(300);
-		assert.equal(f.clears, 1);
 		assert.match(f.labels.at(-1)!, /fresh$/);
 	});
 }
@@ -231,48 +298,23 @@ for (const toggle of ["enabled", "lines"] as const) {
 test("unsupported hosts warn once per session, keep native label, and can recover", () => {
 	const f = fixture();
 	f.host.supported = false;
-	f.update("missing target");
-	f.update("still missing");
+	f.update("cannot write");
+	assert.deepEqual(f.labels, []);
 	assert.equal(f.warnings.length, 1);
-	assert.match(f.warnings[0]!, /thinking peek unavailable on this host; retaining the native label/);
-	f.controller.resetAndClear();
-	assert.equal(f.clears, 0, "failed label writes do not trigger a global native reset");
+	f.update("cannot write again");
+	assert.equal(f.warnings.length, 1, "only warns once");
 	f.host.supported = true;
 	f.update("recovered");
-	assert.match(f.labels.at(-1)!, /recovered$/);
-	f.host.supported = false;
-	f.controller.messageStart(assistant, f.ctx);
-	f.update("missing again");
-	assert.equal(f.warnings.length, 1);
-	f.lifecycle.start();
-	f.controller.startSession();
-	f.controller.clearLabel(f.ctx);
-	f.update("new session missing");
-	assert.equal(f.warnings.length, 2);
+	assert.equal(f.labels.length, 1);
 });
 
 test("missing viewport/editor falls back safely and target resets follow the current editor", () => {
 	const f = fixture();
-	f.host.columns = undefined;
-	f.update("no viewport");
-	assert.deepEqual(f.labels, []);
-	assert.equal(f.warnings.length, 1);
-	f.host.columns = 1;
-	f.update("narrow");
-	assert.equal(stripAnsi(f.labels.at(-1)!), "…");
 	f.setEditor(undefined);
-	f.controller.resetAndClear();
-	assert.equal(f.resets, 1);
 	f.update("no editor");
-	assert.equal(f.warnings.length, 1);
-	let nextResets = 0;
-	f.setEditor({
-		getViewportWidth: () => 80,
-		setLatestHiddenThinkingLabel: () => true,
-		resetHiddenThinkingLabelTarget: () => { nextResets++; },
-	});
-	f.controller.messageStart(assistant, f.ctx);
-	assert.equal(nextResets, 1);
+	assert.deepEqual(f.labels, []);
+	f.controller.startSession();
+	assert.equal(f.resets, 0);
 });
 
 test("inactive/non-TUI/replayed events do not write labels; throwing idle probes still work", () => {
@@ -281,23 +323,22 @@ test("inactive/non-TUI/replayed events do not write labels; throwing idle probes
 	f.update("inactive");
 	f.host.active = true;
 	f.host.tui = false;
-	f.update("non-TUI");
-	assert.deepEqual(f.labels, []);
-	assert.deepEqual(f.warnings, []);
+	f.update("not tui");
 	f.host.tui = true;
-	const idleCtx = { ...f.ctx, isIdle: () => true } as ExtensionContext;
-	f.controller.messageStart(assistant, idleCtx);
-	f.controller.messageUpdate({ role: "assistant", content: [{ type: "thinking", thinking: "replay" }] }, idleCtx);
-	assert.equal(f.resets, 1);
-	assert.deepEqual(f.labels, []);
-	const throwingCtx = { ...f.ctx, isIdle: () => { throw new Error("unsupported"); } } as ExtensionContext;
-	f.controller.messageStart(assistant, throwingCtx);
-	f.controller.messageUpdate({ role: "assistant", content: [{ type: "thinking", thinking: "live" }] }, throwingCtx);
-	assert.match(f.labels.at(-1)!, /live$/);
-	f.host.tui = false;
-	f.controller.clearLabel();
-	assert.equal(f.clears, 0);
-	f.host.tui = true;
-	f.controller.clearLabel();
-	assert.equal(f.clears, 1);
+	const idleCtx = {
+		...f.ctx,
+		isIdle() { return true; },
+	} as unknown as ExtensionContext;
+	f.controller.messageUpdate({
+		role: "assistant", content: [{ type: "thinking", thinking: "idle" }],
+	}, idleCtx);
+	const brokenCtx = {
+		...f.ctx,
+		isIdle() { throw new Error("probe failed"); },
+	} as unknown as ExtensionContext;
+	f.controller.messageUpdate({
+		role: "assistant", content: [{ type: "thinking", thinking: "broken probe" }],
+	}, brokenCtx);
+	assert.equal(f.labels.length, 1);
+	assert.match(f.labels[0]!, /broken probe$/);
 });

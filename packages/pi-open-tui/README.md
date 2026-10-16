@@ -152,7 +152,7 @@ Key options:
 | `footerSegments` | Boolean flags | Shows or hides individual footer data |
 | `footerSegments.capitalizeProviderName` | Boolean | Capitalizes the first character of the provider name in the footer; set it to `false` to keep the provider's original casing |
 | `telemetry` | Boolean flags | Enables telemetry and its individual measurements |
-| `thinkingPeek.lines` | `0`, `1`, `2` | Off, one-line, or two-line hidden thinking preview |
+| `thinkingPeek.lines` | `0`, `1`, `2` | Off, one or two preview body rows below a separate status row |
 | `toolBoxBorder` | Enabled, style, status/static color, four edge enabled/char controls | Tools frame; disabled by default. Saved default: `double`, `status`, top/left on, bottom/right off. Fixed colors use theme tokens such as `muted` or `accent` |
 
 In **Tools**, the first three rows are **Enhanced presentation**, **Compression**, and **Border style**. The first two are independent On/Off switches; Border style cycles Off, Single, Bold, Double, Dashed and Custom. Off hides all subsequent border controls without erasing their stored choices. **User / Skill** has one **Enabled** switch combining layout and frame activation: Off restores native User/Skill presentation and hides every other setting; On exposes the saved style, colors and edges. Existing compact rails count as enabled without a startup rewrite; explicit User styling edits activate that group’s configured frame. Both groups retain independent four-edge/symbol controls. Fixed-color inputs appear only in fixed mode; stored colors can also affect compact rails, with legacy dormant Tool colors preserved until an explicit Tool presentation edit. Symbol/color inputs use Enter to save, Esc to cancel and empty to reset; symbols must occupy one visible column. Right edges remain optional and off by default.
@@ -226,15 +226,18 @@ The `$ / M` value is the model's list-price rate from `usage.cost.total`, not th
 
 When Pi's **Hide thinking** setting is enabled, pi-open-tui shows a compact ticker in the native hidden thinking block's `Thinking...` position. The `/open-tui` setting offers three modes: **Off**, **1 line**, and **2 lines**.
 
-- while the model is reasoning, the current thinking tail streams by with a spinner (`~ think ⠋ …`);
-- when the answer starts, it settles on a check mark (`~ think ✓`);
-- in 2-line mode, the previous and latest thinking lines share the same text indentation; if the latest line overflows, both rows follow its newest tail as tokens arrive instead of retaining the previous line;
-- after the task settles, the native `Thinking...` label is restored.
+- the status row uses only the thinking icon, spinner and elapsed time, plus an optional detected title before the time; there is no added `think` / `thinking` label;
+- preview text always starts on the next row, aligned with the status row's left edge. **1 line** and **2 lines** count preview body rows, excluding the status row (up to two or three rows total);
+- if the latest thought overflows in 2-line mode, both body rows follow its newest tail as tokens arrive instead of retaining the previous thought;
+- when reasoning finishes, the spinner becomes a completion mark and the summary puts the title before the frozen duration: `  (Analyzing constraints · 1m 8s)`, or `  (1m 8s)` without a title. Settlement retains it until the next message/session reset.
 
 ```text
-~ think ⠋ previous thought
-          latest thought
+ ⠧ 4.9s
+previous thought
+latest thought
 ```
+
+Examples use Nerd Font icons; Unicode mode uses `💡` and ASCII mode retains `~`. The existing default remains one preview body row. Expanded thinking and disabled peek keep native behavior.
 
 The ticker appears only once the model actually streams reasoning, so non-reasoning models never show it. Pi's own Hide thinking toggle controls visibility; changing it takes effect immediately. Each row is truncated by *visible* width, so CJK-wide thinking text cannot overflow. Configure it from **General → Thinking peek** in `/open-tui`, or via `thinkingPeek.lines` in `open-tui.json`.
 

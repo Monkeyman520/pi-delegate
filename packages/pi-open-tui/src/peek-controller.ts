@@ -1,12 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { OpenTuiConfig } from "./config.ts";
 import { resolveGlyphs } from "./icons.ts";
-import { buildPeekLabel, collectPeekParts, createPeekState, reducePeek } from "./peek.ts";
+import { buildPeekLabel, collectPeekParts, createPeekState, formatElapsedDuration, reducePeek } from "./peek.ts";
 import type { SessionLifecycle } from "./session-lifecycle.ts";
 
 const HIDDEN_THINKING_HORIZONTAL_PADDING = 2;
 // Pi's fullscreen transcript can reserve one more column for its scrollbar.
 const HIDDEN_THINKING_SCROLLBAR_RESERVE = 1;
+const DEFAULT_TICKER_INTERVAL_MS = 80;
 
 export interface PeekLabelEditor {
 	getViewportWidth(): number | undefined;
@@ -21,6 +22,8 @@ interface PeekControllerOptions {
 	isActive(): boolean;
 	isTuiContext(ctx: ExtensionContext): boolean;
 	lifecycle: SessionLifecycle;
+	now?: () => number;
+	tickerIntervalMs?: number;
 }
 
 interface PeekMessage {
@@ -32,14 +35,21 @@ interface PeekMessage {
 export class PeekController {
 	private readonly peek = createPeekState();
 	private frame = 0;
-	private settleTimer: ReturnType<typeof setTimeout> | undefined;
+	private settleTimer: NodeJS.Timeout | undefined;
+	private tickerTimer: NodeJS.Timeout | undefined;
+	private thinkingStartMs: number | undefined;
 	private taskEpoch = 0;
 	private labelActive = false;
 	private warningShown = false;
+	private activeCtx: ExtensionContext | undefined;
 	private readonly options: PeekControllerOptions;
+	private readonly now: () => number;
+	private readonly tickerIntervalMs: number;
 
 	constructor(options: PeekControllerOptions) {
 		this.options = options;
+		this.now = options.now ?? Date.now;
+		this.tickerIntervalMs = options.tickerIntervalMs ?? DEFAULT_TICKER_INTERVAL_MS;
 	}
 
 	startSession(): void {
@@ -59,8 +69,9 @@ export class PeekController {
 	}
 
 	clearLabel(ctx?: ExtensionContext): void {
+		this.stopTicker();
 		if (!this.labelActive) return;
-		const target = ctx ?? this.options.getContext();
+		const target = ctx ?? this.activeCtx ?? this.options.getContext();
 		if (!target || !this.options.isTuiContext(target)) return;
 		// The global reset is safe: completed messages return to Pi's native label.
 		target.ui.setHiddenThinkingLabel();
@@ -78,59 +89,120 @@ export class PeekController {
 	messageUpdate(message: PeekMessage | undefined, ctx: ExtensionContext): void {
 		if (!this.options.lifecycle.isCurrent() || this.isAgentIdle(ctx) || !this.isEnabled()) return;
 		if (message?.role !== "assistant" || this.peek.phase === "done") return;
-		const next = reducePeek(this.peek, collectPeekParts(message.content));
-		const changed = next.phase !== this.peek.phase || next.tail !== this.peek.tail;
+		this.activeCtx = ctx;
+		const parts = collectPeekParts(message.content);
+		if (parts.thinking && this.thinkingStartMs === undefined) {
+			this.thinkingStartMs = this.now();
+		}
+		const elapsedMs = this.thinkingStartMs !== undefined ? this.now() - this.thinkingStartMs : undefined;
+		const next = reducePeek(this.peek, parts, elapsedMs);
+		const elapsedChanged = (this.peek.elapsedMs !== undefined && next.elapsedMs !== undefined)
+			? formatElapsedDuration(this.peek.elapsedMs) !== formatElapsedDuration(next.elapsedMs)
+			: this.peek.elapsedMs !== next.elapsedMs;
+		const changed = next.phase !== this.peek.phase
+			|| next.tail !== this.peek.tail
+			|| next.milestone !== this.peek.milestone
+			|| elapsedChanged;
 		this.peek.phase = next.phase;
 		this.peek.tail = next.tail;
-		if (!changed) return;
+		this.peek.milestone = next.milestone;
+		this.peek.elapsedMs = next.elapsedMs;
 		if (this.peek.phase === "thinking") {
-			this.frame++;
-			this.setLabel(ctx);
+			this.startTicker(ctx);
+			if (changed) this.setLabel(ctx);
 		} else if (this.peek.phase === "done") {
-			this.setLabel(ctx);
+			this.stopTicker();
+			if (changed) this.setLabel(ctx);
 		}
 	}
 
 	messageEnd(message: PeekMessage | undefined, ctx: ExtensionContext): void {
 		if (!this.options.lifecycle.isCurrent()) return;
+		if (ctx) this.activeCtx = ctx;
 		if (message?.role === "assistant" && this.peek.phase === "thinking") {
+			this.stopTicker();
 			// Sub-message finished (answer text or a tool call): freeze the peek line.
 			this.peek.phase = "done";
+			if (this.thinkingStartMs !== undefined) {
+				this.peek.elapsedMs = this.now() - this.thinkingStartMs;
+			}
 			this.setLabel(ctx);
 		}
 	}
 
 	settled(ctx: ExtensionContext): void {
+		if (!this.options.lifecycle.isCurrent()) return;
+		if (ctx) this.activeCtx = ctx;
+		clearTimeout(this.settleTimer);
 		const epoch = this.taskEpoch;
-		if (this.settleTimer) clearTimeout(this.settleTimer);
 		const generation = this.options.lifecycle.currentGeneration();
 		this.settleTimer = setTimeout(() => {
 			this.settleTimer = undefined;
 			if (!this.options.lifecycle.isCurrent(generation) || this.taskEpoch !== epoch) return;
-			this.resetAndClear(ctx);
+			if (this.peek.phase === "thinking") {
+				this.stopTicker();
+				this.peek.phase = "done";
+				if (this.thinkingStartMs !== undefined) {
+					this.peek.elapsedMs = this.now() - this.thinkingStartMs;
+				}
+				this.setLabel(ctx);
+			}
 		}, 300);
 	}
 
 	configChanged(previousLines: number, ctx?: ExtensionContext): void {
 		const config = this.options.getConfig();
 		if (config.thinkingPeek.lines === 0 || !config.enabled) {
+			this.stopTicker();
 			this.resetAndClear(ctx);
 		} else if (previousLines !== config.thinkingPeek.lines && this.labelActive) {
 			this.setLabel(ctx);
 		}
 	}
 
-	private reset(): void {
-		this.peek.phase = "idle";
-		this.peek.tail = "";
-		this.options.getEditor()?.resetHiddenThinkingLabelTarget();
-		if (this.settleTimer) {
-			clearTimeout(this.settleTimer);
-			this.settleTimer = undefined;
+	tick(ctx?: ExtensionContext): void {
+		if (ctx) this.activeCtx = ctx;
+		if (!this.options.lifecycle.isCurrent() || !this.isEnabled() || this.peek.phase !== "thinking") return;
+		this.frame++;
+		if (this.thinkingStartMs !== undefined) {
+			this.peek.elapsedMs = this.now() - this.thinkingStartMs;
+		}
+		this.setLabel(ctx);
+	}
+
+	private startTicker(ctx?: ExtensionContext): void {
+		if (ctx) this.activeCtx = ctx;
+		if (this.tickerTimer !== undefined || this.tickerIntervalMs <= 0) return;
+		this.tickerTimer = setInterval(() => {
+			if (!this.options.lifecycle.isCurrent() || !this.isEnabled() || this.peek.phase !== "thinking") {
+				this.stopTicker();
+				return;
+			}
+			this.tick();
+		}, this.tickerIntervalMs);
+		this.tickerTimer.unref?.();
+	}
+
+	private stopTicker(): void {
+		if (this.tickerTimer !== undefined) {
+			clearInterval(this.tickerTimer);
+			this.tickerTimer = undefined;
 		}
 	}
 
-	/** Pi decides visibility; the extension toggle only controls updates. */
+	private reset(): void {
+		this.stopTicker();
+		this.peek.phase = "idle";
+		this.peek.tail = "";
+		this.peek.milestone = undefined;
+		this.peek.elapsedMs = undefined;
+		this.thinkingStartMs = undefined;
+		this.activeCtx = undefined;
+		clearTimeout(this.settleTimer);
+		this.settleTimer = undefined;
+		this.options.getEditor()?.resetHiddenThinkingLabelTarget();
+	}
+
 	private isEnabled(): boolean {
 		const config = this.options.getConfig();
 		return this.options.lifecycle.isCurrent() && config.enabled && config.thinkingPeek.lines > 0 && this.options.isActive();
@@ -138,7 +210,7 @@ export class PeekController {
 
 	private setLabel(ctx?: ExtensionContext): void {
 		if (!this.isEnabled() || this.peek.phase === "idle") return;
-		const target = ctx ?? this.options.getContext();
+		const target = ctx ?? this.activeCtx ?? this.options.getContext();
 		if (!target || !this.options.isTuiContext(target)) return;
 		const editor = this.options.getEditor();
 		const columns = editor?.getViewportWidth();

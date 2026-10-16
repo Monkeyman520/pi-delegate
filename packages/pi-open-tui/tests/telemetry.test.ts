@@ -608,8 +608,8 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 		assert.equal(getThinkingLabel(thinkingComponents[0]!), "Thinking...");
 		assert.equal(
 			new ScrollView(new Text(currentLabel, 1, 0), { scrollbar: "always" }).render(effectiveWidth).length,
-			1,
-			"the peek row must fit the narrowed fullscreen transcript",
+			2,
+			"the status and one body row must fit without extra wrapping in the narrowed fullscreen transcript",
 		);
 		assistant.content[0]!.thinking += "y";
 		await emit("message_update", {
@@ -640,7 +640,10 @@ test("open-tui keeps a bounded peek scoped to the current assistant", async () =
 			globalLabelUpdates.slice(updatesAfterNewTaskStart).every((label) => label !== undefined),
 			"a stale settle timer must not clear the new task's label",
 		);
-		assert.equal(getThinkingLabel(thinkingComponents[1]!), streamedLabel, "the label must not animate without a delta");
+		const tickedLabel = getThinkingLabel(thinkingComponents[1]!);
+		assert.notEqual(tickedLabel, streamedLabel, "the spinner/timer must advance even without a delta");
+		assert.deepEqual(tickedLabel.split("\n").slice(1), streamedLabel.split("\n").slice(1), "timer updates must preserve the current thought body");
+		assert.equal(getThinkingLabel(thinkingComponents[0]!), "Thinking...", "only the current assistant gets the peek");
 	} finally {
 		if (previousColumns) Object.defineProperty(process.stdout, "columns", previousColumns);
 		else Reflect.deleteProperty(process.stdout, "columns");

@@ -11,6 +11,8 @@ export type PeekPhase = "idle" | "thinking" | "done";
 export interface PeekState {
 	phase: PeekPhase;
 	tail: string;
+	milestone?: string;
+	elapsedMs?: number;
 }
 
 export interface PeekMessageParts {
@@ -23,6 +25,58 @@ function stringValue(value: unknown): string | undefined {
 }
 
 const normalizePeekLineCount = (lineCount: number): number => Math.max(1, Math.min(MAX_PEEK_LINES, Math.floor(lineCount)));
+const HEADING_RE = /^#{1,6}\s+(.+)$/;
+const STEP_PHASE_RE = /^(?:Step|Phase|步骤|阶段)\s*[\d一二三四五六七八九十]+[:：\s]*(.+)?$/i;
+const GUIDE_WORD_RE = /^(?:Planning|Analyzing|Checking|Reviewing|Evaluating|Refining|Summary|规划|分析|检查|审查|评估|构思|总结)(?:[:：\s].*|[\u4e00-\u9fa5].*)?$/i;
+
+export function sanitizeThinkingPreview(raw: string): string {
+	if (!raw) return "";
+	return raw
+		.replace(/```[a-z0-9_-]*\n?/gi, " ")
+		.replace(/`/g, "")
+		.split("\n")
+		.map((line) => {
+			let l = line.trim();
+			l = l.replace(/^#{1,6}\s+/, "");
+			l = l.replace(/^>\s+/, "");
+			l = l.replace(/^[-*+]\s+/, "");
+			l = l.replace(/^\d+[\.\)]\s+/, "");
+			return l.trim();
+		})
+		.filter(Boolean)
+		.join(" ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+export function extractMilestone(fullThinking: string): string | undefined {
+	if (!fullThinking) return undefined;
+	const lines = fullThinking.split("\n");
+	for (let i = lines.length - 1; i >= 0; i--) {
+		const rawLine = lines[i]?.trim();
+		if (!rawLine) continue;
+		const headingMatch = HEADING_RE.exec(rawLine);
+		if (headingMatch?.[1]) {
+			const clean = sanitizeThinkingPreview(headingMatch[1]);
+			if (clean) return clean.slice(0, 40);
+		}
+		if (STEP_PHASE_RE.test(rawLine) || GUIDE_WORD_RE.test(rawLine)) {
+			const clean = sanitizeThinkingPreview(rawLine);
+			if (clean) return clean.slice(0, 40);
+		}
+	}
+	return undefined;
+}
+
+export function formatElapsedDuration(ms: number): string {
+	const totalSec = Math.max(0, ms) / 1000;
+	if (totalSec < 60) {
+		return `${totalSec.toFixed(1)}s`;
+	}
+	const mins = Math.floor(totalSec / 60);
+	const secs = Math.floor(totalSec % 60);
+	return `${mins}m ${secs}s`;
+}
 
 /**
  * Pure phase machine for one assistant-message update.
@@ -35,12 +89,14 @@ const normalizePeekLineCount = (lineCount: number): number => Math.max(1, Math.m
  * - done + thinking        -> done    (never restart the spinner)
  * - any + text only        -> idle stays idle (plain answer, nothing to peek)
  */
-export function reducePeek(prev: PeekState, parts: PeekMessageParts): PeekState {
+export function reducePeek(prev: PeekState, parts: PeekMessageParts, elapsedMs?: number): PeekState {
 	const tail = parts.thinking ? peekTail(parts.thinking, MAX_PEEK_LINES) : prev.tail;
+	const milestone = parts.thinking ? extractMilestone(parts.thinking) ?? prev.milestone : prev.milestone;
 	let phase = prev.phase;
 	if (parts.thinking && phase === "idle") phase = "thinking";
 	if (parts.text && phase === "thinking") phase = "done";
-	return { phase, tail };
+	const nextElapsed = elapsedMs !== undefined ? elapsedMs : prev.elapsedMs;
+	return { phase, tail, milestone, elapsedMs: nextElapsed };
 }
 
 /** Fresh peek state (no task running yet). */
@@ -81,7 +137,7 @@ export function peekTail(fullThinking: string, lineCount = 1): string {
 	let end = fullThinking.length;
 	while (end > 0 && lines.length < count) {
 		const start = fullThinking.lastIndexOf("\n", end - 1) + 1;
-		const line = fullThinking.slice(start, end).replace(/\s+/g, " ").trim();
+		const line = sanitizeThinkingPreview(fullThinking.slice(start, end));
 		if (line) lines.push(line);
 		end = start - 1;
 	}
@@ -113,8 +169,9 @@ export function clipTail(text: string, budget: number): string {
 /**
  * Build the label Pi renders in its hidden-thinking block. `width` is a
  * conservative budget that keeps each native Text row within the terminal.
- * In two-line mode, an overflowing latest logical line uses both rows for
- * its continuation instead of retaining the previous logical line.
+ * The status marker has its own row; lineCount budgets only preview body rows.
+ * An overflowing latest logical line uses both body rows in two-line mode
+ * instead of retaining the previous logical line.
  */
 export function buildPeekLabel(
 	state: PeekState,
@@ -124,44 +181,40 @@ export function buildPeekLabel(
 	lineCount = 1,
 ): string {
 	const w = Math.max(1, Math.floor(width));
-	const prefix = `${glyphs.thinking} think`;
+	const prefix = glyphs.thinking;
 	const count = normalizePeekLineCount(lineCount);
 	const fit = (line: string): string => truncateToWidth(line, w, "…");
+	// Titles, like preview text, originate in untrusted model output.
+	const milestone = state.milestone ? sanitizeStatus(state.milestone) : "";
 	switch (state.phase) {
 		case "thinking": {
 			const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length] ?? "";
-			// Thinking text is model output (untrusted): strip terminal control
-			// sequences before placing it in Pi's native label.
-			const marker = `${prefix} ${spin}`;
-			const markerWidth = visibleWidth(`${marker} `);
-			const contentWidth = Math.max(0, w - markerWidth);
-			const thoughtIndent = " ".repeat(markerWidth);
+			const timeStr = state.elapsedMs !== undefined ? formatElapsedDuration(state.elapsedMs) : "";
+			const metadata = [milestone ? `[${milestone}]` : "", timeStr].filter(Boolean).join(" ");
+			const marker = `${prefix} ${spin}${metadata ? ` ${metadata}` : ""}`;
 			const safeLines = state.tail
 				.split("\n")
 				.map((tail) => sanitizeStatus(tail))
 				.filter(Boolean)
 				.slice(-count);
 			const latest = safeLines.at(-1) ?? "";
-			const lineWithMarker = (tail: string): string => fit(tail ? `${marker} ${tail}` : marker);
+			let body = safeLines.map((tail) => clipTail(tail, w));
 			if (count >= 2) {
-				const window = clipTail(latest, contentWidth * count);
-				const latestWrapped = wrapTextWithAnsi(window, Math.max(1, contentWidth));
+				const window = clipTail(latest, w * count);
+				const latestWrapped = wrapTextWithAnsi(window, w);
 				if (latestWrapped.length > 1) {
 					// Word wrapping may add short rows; always retain the newest content.
-					const first = latestWrapped.at(-2) ?? "";
-					const second = latestWrapped.at(-1) ?? "";
-					return `${lineWithMarker(first)}\n${fit(`${thoughtIndent}${second}`)}`;
+					body = latestWrapped.slice(-count).map(fit);
 				}
 			}
-			const firstTail = clipTail(count >= 2 ? safeLines[0] ?? "" : latest, contentWidth);
-			if (count < 2 || safeLines.length < 2) return lineWithMarker(firstTail);
-			// Align the latest line with the first line's thinking text, not with
-			// the status marker.
-			const secondTail = clipTail(latest, contentWidth);
-			return `${lineWithMarker(firstTail)}\n${fit(secondTail ? `${thoughtIndent}${secondTail}` : thoughtIndent)}`;
+			return [fit(marker), ...body].join("\n");
 		}
-		case "done":
-			return fit(`${prefix} ${glyphs.done}`);
+		case "done": {
+			const timeStr = state.elapsedMs !== undefined ? formatElapsedDuration(state.elapsedMs) : "";
+			const meta = [milestone, timeStr].filter(Boolean).join(" · ");
+			const metaStr = meta ? ` (${meta})` : "";
+			return fit(`${prefix} ${glyphs.done}${metaStr}`);
+		}
 		default:
 			return fit(`${prefix} ·`);
 	}
